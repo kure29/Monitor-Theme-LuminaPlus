@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="keywords"
+      content="Monitor Theme LuminaPlus, server monitor, real-time server status, server performance dashboard" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="LuminaPlus" />
+    <link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />
+    <link rel="apple-touch-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon.ico" />
+    <meta property="og:title" content="Monitor Theme LuminaPlus" />
+    <meta property="og:description" content="A refined public status theme for monitor." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Monitor Theme LuminaPlus" />
+    <meta name="twitter:description" content="A refined public status theme for monitor." />
+    <title>Monitor · LuminaPlus</title>
+    <meta name="description" content="A refined public status theme for monitor." />
+    <script>
+      (() => {
+        const appearances = new Set(["system", "light", "dark"]);
+        const readAppearance = (key) => {
+          const raw = localStorage.getItem(key);
+          if (raw == null) return null;
+          let value = raw;
+          try {
+            value = JSON.parse(raw);
+          } catch {}
+          if (!appearances.has(value)) return null;
+          const normalized = JSON.stringify(value);
+          if (raw !== normalized) localStorage.setItem(key, normalized);
+          return value;
+        };
+
+        let appearance = "system";
+        try {
+          appearance = readAppearance("appearance") ?? readAppearance("appearance_default") ?? "system";
+        } catch {
+          appearance = "system";
+        }
+        const resolved =
+          appearance === "system"
+            ? window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light"
+            : appearance;
+        document.documentElement.dataset.appearance = resolved;
+        document.documentElement.style.colorScheme = resolved;
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = resolved === "dark" ? "#000000" : "#F5F5F7";
+
+        try {
+          const rawDepth = localStorage.getItem("monitor-luminaplus:dark-depth");
+          if (rawDepth != null) {
+            const parsedDepth = Number(rawDepth);
+            const darkDepth = Number.isFinite(parsedDepth)
+              ? Math.min(100, Math.max(0, Math.round(parsedDepth)))
+              : 0;
+            if (darkDepth > 0) {
+              document.documentElement.style.setProperty(
+                "--dark-depth",
+                String(darkDepth),
+              );
+            } else {
+              document.documentElement.style.removeProperty("--dark-depth");
+            }
+          }
+        } catch {}
+
+        try {
+          const rawBg = localStorage.getItem("monitor-luminaplus:bg");
+          if (rawBg) {
+            const bg = JSON.parse(rawBg);
+            if (bg && (bg.v === 1 || bg.v === 2)) {
+              const sizes = new Set(["cover", "contain", "auto"]);
+              const positions = new Set(["top", "center", "bottom"]);
+              const parseImage = (value) =>
+                typeof value === "string" &&
+                (value === "none" || /^url\("[^\"'`()<>\\\s]+"\)$/.test(value))
+                  ? value
+                  : null;
+              const dark = resolved === "dark";
+              const desktopImage =
+                parseImage(dark ? bg.darkDesktop : bg.lightDesktop) ?? "none";
+              const mobile =
+                parseImage(dark ? bg.darkMobile : bg.lightMobile) ?? desktopImage;
+              const isMobile = window.matchMedia("(max-width: 720px)").matches;
+              const hasCoarsePointer = window.matchMedia(
+                "(hover: none) and (pointer: coarse)",
+              ).matches;
+              const reducedMotion = window.matchMedia(
+                "(prefers-reduced-motion: reduce)",
+              ).matches;
+              const saveData = navigator.connection && navigator.connection.saveData === true;
+              const shouldLoadDesktopVideo =
+                bg.v === 2 &&
+                bg.desktopVideo === true &&
+                !isMobile &&
+                !hasCoarsePointer &&
+                !reducedMotion &&
+                !saveData;
+              const desktop = shouldLoadDesktopVideo ? "none" : desktopImage;
+              const parsedAlpha =
+                (typeof bg.alpha === "string" && bg.alpha.trim() !== "") ||
+                typeof bg.alpha === "number"
+                  ? Number(bg.alpha)
+                  : Number.NaN;
+              const alpha = Number.isFinite(parsedAlpha)
+                ? Math.min(100, Math.max(0, Math.round(parsedAlpha)))
+                : 100;
+              const scrim = alpha >= 95 ? 0 : Math.round(((95 - alpha) / 95) * 16);
+              const style = document.documentElement.style;
+              style.setProperty("--bg-image-desktop", desktop);
+              style.setProperty("--bg-image-mobile", mobile);
+              style.setProperty("--bg-size", sizes.has(bg.size) ? bg.size : "cover");
+              style.setProperty("--bg-position", positions.has(bg.position) ? bg.position : "center");
+              const selectedImage = isMobile ? mobile : desktop;
+              if (selectedImage !== "none") {
+                style.setProperty("--surface-alpha", String(alpha));
+              } else {
+                style.removeProperty("--surface-alpha");
+              }
+              if (selectedImage !== "none" && scrim > 0) {
+                style.setProperty(
+                  "--bg-scrim",
+                  `color-mix(in srgb, var(--bg-0) ${scrim}%, transparent)`,
+                );
+              } else {
+                style.removeProperty("--bg-scrim");
+              }
+            }
+          }
+        } catch {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root" class="relative z-30"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

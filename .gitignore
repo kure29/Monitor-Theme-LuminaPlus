@@ -1,0 +1,45 @@
+node_modules/
+dist/
+
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+.DS_Store
+Thumbs.db
+
+*.zip
+theme.tar.gz
+.theme-package/
+
+.idea/
+.vscode/
+.claude/
+.codex
+.env
+.env.*
+!.env.example
+
+.cache/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Local reference checkouts
+komari-main/
+komari-theme-purcarte-main/
+
+# Upstream reference material retained locally
+.github/release-notes/
+docs/images/v1.*/
+docs/images/theme-preview.png
+docs/upstream/
+
+# Komari-only IP plugin integration retained as an upstream reference
+src/components/instance/IpInfoPanel.tsx
+src/hooks/useIpInfo.ts
+src/hooks/useIpNetworkProfile.ts
+src/services/ipInfo.ts
+src/services/__tests__/ipInfo.test.ts
