@@ -43,6 +43,26 @@ describe("homepage ping metric interval adaptation", () => {
     expect(items.get("node-a")?.metricIntervalMs).toBe(5 * MINUTE_MS);
   });
 
+  it("prefers the hub's window loss over averaging per-bucket percentages (regression)", () => {
+    const records = [
+      { task_id: 7, time: "2026-07-17T10:00:00Z", value: 42, client: "node-a", count: 1, loss: 1 },
+      { task_id: 7, time: "2026-07-17T10:01:00Z", value: 43, client: "node-a", count: 1, loss: 0 },
+    ];
+
+    // 逐桶 1% 会被 round 成"这一桶没有丢包",窗口值必须取自 monitor 的 loss。
+    const withoutWindow = buildPingOverviewItems(7, records, [], 60);
+    expect(withoutWindow.get("node-a")?.loss).toBe(0);
+
+    const withWindow = buildPingOverviewItems(
+      7,
+      records,
+      [],
+      60,
+      new Map([["node-a", 0.56]]),
+    );
+    expect(withWindow.get("node-a")?.loss).toBe(0.56);
+  });
+
   it("projects 1.2.7 five-minute aggregates across twenty-four continuous buckets", () => {
     const buckets = buildPingBuckets(
       {

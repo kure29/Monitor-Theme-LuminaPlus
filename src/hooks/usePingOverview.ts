@@ -162,6 +162,7 @@ export function buildPingOverviewItems(
   records: PingRecord[],
   metricStats: PingTaskStats[] = [],
   metricIntervalSeconds?: number,
+  windowLossByClient?: Map<string, number>,
 ) {
   const metricIntervalMs =
     typeof metricIntervalSeconds === "number" &&
@@ -222,6 +223,9 @@ export function buildPingOverviewItems(
 
     const lossStats = lossStatsByClient.get(client);
     const serverStats = statsByClient.get(client);
+    // monitor 只给窗口丢包率(逐桶百分比的分母已经丢了,不能自己平均),所以它优先于本地
+    // 由逐桶 loss 推出来的值;zero-loss 的探测不在 map 里,回落到本地计算得到的 0。
+    const windowLoss = windowLossByClient?.get(client);
     result.set(client, {
       client,
       isAssigned: true,
@@ -233,6 +237,7 @@ export function buildPingOverviewItems(
       max: serverStats?.max ?? max,
       loss:
         serverStats?.loss ??
+        windowLoss ??
         (lossStats?.total ? (lossStats.lost / lossStats.total) * 100 : null),
     });
   }
@@ -567,6 +572,7 @@ export async function buildPingOverviewMap(
         stats,
         intervalSeconds,
         taskAssignmentsKnown,
+        clientWindowLoss,
       },
     } = loaded;
     const effectiveStats = mergePingOverviewStats(
@@ -583,9 +589,23 @@ export async function buildPingOverviewMap(
     if (taskAssignmentsKnown || task?.clients.length) {
       assignedClientsByTask.set(taskId, new Set(task?.clients ?? []));
     }
+    // 每个节点在本任务上的窗口丢包率(monitor 的 loss 只列出有丢包的探测)。
+    const windowLossByClient = new Map<string, number>();
+    for (const [client, perTask] of Object.entries(clientWindowLoss ?? {})) {
+      const value = perTask?.[taskId];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        windowLossByClient.set(client, value);
+      }
+    }
     itemsByTask.set(
       taskId,
-      buildPingOverviewItems(taskId, records, effectiveStats, intervalSeconds),
+      buildPingOverviewItems(
+        taskId,
+        records,
+        effectiveStats,
+        intervalSeconds,
+        windowLossByClient,
+      ),
     );
 
     const taskInterval =

@@ -122,6 +122,8 @@ interface PingOverviewResponse {
   rangeEndMs?: number;
   intervalSeconds?: number;
   stats?: PingTaskStats[];
+  /** 每个节点各自的窗口丢包率(节点 uuid → 任务 id → 百分比)。 */
+  clientWindowLoss?: Record<string, Record<number, number>>;
 }
 
 export class ApiRequestError extends Error {
@@ -353,7 +355,7 @@ function parseNodeId(uuid: string) {
   return id;
 }
 
-async function getHistory(
+async function requestHistory(
   uuid: string,
   hours: number,
   series: "metrics" | "ping",
@@ -364,10 +366,67 @@ async function getHistory(
     points: "720",
     series,
   });
-  return requestJson<MonitorHistory>(
-    `/api/nodes/${parseNodeId(uuid)}/metrics?${params}`,
-    options,
-  );
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await requestJson<MonitorHistory>(
+        `/api/nodes/${parseNodeId(uuid)}/metrics?${params}`,
+        options,
+      );
+    } catch (error) {
+      // hub 只允许 4 个历史查询并发,超出的直接 503("too many history queries in flight")。
+      // 首页同时要画多台机器,偶尔撞上别人的请求很正常,短暂退避后重试一次比整块图表
+      // 显示"加载失败"更合适。
+      const delay = HISTORY_RETRY_DELAYS_MS[attempt];
+      if (delay == null || !isHistoryBusyError(error) || options?.signal?.aborted) throw error;
+      await sleep(delay, options?.signal);
+    }
+  }
+}
+
+const HISTORY_RETRY_DELAYS_MS = [400, 1_200];
+
+function isHistoryBusyError(error: unknown) {
+  return error instanceof ApiRequestError && error.status === 503;
+}
+
+function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * 同一节点、同一窗口、同一序列的请求合并成一次。
+ *
+ * 首页三网模式会按任务各查一次同一个节点,而 `/api/nodes/{id}/metrics` 的响应里本来就带着
+ * 该节点全部分配任务的记录:不去重时 3 个任务就是 3 份完全相同的响应,既是三倍流量,也把
+ * hub 的 4 个历史查询槽位撞满,表现为卡片时不时"加载失败"。
+ */
+const historyRequests = new Map<string, Promise<MonitorHistory>>();
+
+function getHistory(
+  uuid: string,
+  hours: number,
+  series: "metrics" | "ping",
+  options?: ApiCallOptions,
+): Promise<MonitorHistory> {
+  const key = `${uuid}\u0000${Math.max(1, Math.ceil(hours))}\u0000${series}`;
+  const pending = historyRequests.get(key);
+  if (pending) return pending;
+
+  const request = requestHistory(uuid, hours, series, options).finally(() => {
+    if (historyRequests.get(key) === request) historyRequests.delete(key);
+  });
+  historyRequests.set(key, request);
+  return request;
 }
 
 function range(hours: number) {
@@ -576,6 +635,19 @@ export function normalizePingHistory(uuid: string, hours: number, payload: Monit
     count: 1,
     loss: point.loss ?? (point.latency == null ? 100 : 0),
   }));
+  // monitor 只把有丢包的探测放进 loss 里,缺席即 0%;逐桶 loss 是桶内百分比,分母已经丢了,
+  // 平均它们会得到错误的窗口丢包率(见 monitor-theme-default 的接口说明)。
+  const windowLoss: Record<number, number> = {};
+  for (const [rawTaskId, value] of Object.entries(payload.loss ?? {})) {
+    const parsedTaskId = Number(rawTaskId);
+    if (
+      Number.isSafeInteger(parsedTaskId) &&
+      typeof value === "number" &&
+      Number.isFinite(value)
+    ) {
+      windowLoss[parsedTaskId] = Math.min(100, Math.max(0, value));
+    }
+  }
   const ids = new Set(records.map((record) => record.task_id));
   const interval = inferIntervalSeconds((payload.ping ?? []).map((point) => point.ts));
   const tasks = [...ids]
@@ -583,11 +655,13 @@ export function normalizePingHistory(uuid: string, hours: number, payload: Monit
     .map((id) => ({
       ...taskFromProbe(id, payload.probes?.[String(id)] ?? "", [uuid]),
       interval: interval ?? 60,
+      loss: windowLoss[id] ?? 0,
     }));
   return {
     count: records.length,
     records,
     tasks,
+    windowLoss,
     ...range(hours),
     intervalSeconds: interval,
   };
@@ -663,10 +737,17 @@ export async function getPingOverview(
   );
   const records: PingRecord[] = [];
   const tasks = new Map<number, PingTask>();
-  responses.forEach((result) => {
+  const clientWindowLoss: Record<string, Record<number, number>> = {};
+  responses.forEach((result, index) => {
     if (result.status !== "fulfilled") return;
     for (const record of result.value.records) {
       if (taskId == null || record.task_id === taskId) records.push(record);
+    }
+    const windowLoss = result.value.windowLoss;
+    if (windowLoss && Object.keys(windowLoss).length > 0) {
+      // mapBatches 按 entityIds 顺序返回,所以下标就是节点 uuid。
+      const client = entityIds[index];
+      if (client) clientWindowLoss[client] = { ...windowLoss };
     }
     for (const task of result.value.tasks) {
       if (taskId != null && task.id !== taskId) continue;
@@ -681,6 +762,7 @@ export async function getPingOverview(
     records,
     tasks: [...tasks.values()],
     taskAssignmentsKnown: true,
+    clientWindowLoss,
     ...range(hours),
   };
 }

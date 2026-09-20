@@ -22,6 +22,22 @@ describe("monitor Ping history adapter", () => {
     ]);
     expect(result.intervalSeconds).toBe(60);
   });
+
+  it("surfaces the window loss instead of leaving it to per-bucket averages (regression)", () => {
+    // monitor 的逐桶 loss 是桶内百分比(分母已经丢了),窗口丢包率只在顶层 loss 里;
+    // 主题以前自己平均逐桶值,于是「180 次里丢 1 次」被算成 0%。
+    const result = normalizePingHistory("9", 4, {
+      probes: { 2: "Cloudflare" },
+      loss: { 2: 0.56 },
+      ping: [
+        { task_id: 2, ts: 1_700_000_000, latency: 24, loss: 1 },
+        { task_id: 2, ts: 1_700_000_060, latency: 25 },
+      ],
+    });
+
+    expect(result.windowLoss).toEqual({ 2: 0.56 });
+    expect(result.tasks[0]).toMatchObject({ id: 2, loss: 0.56 });
+  });
 });
 
 describe("monitor resource history adapter", () => {

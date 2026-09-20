@@ -290,6 +290,11 @@ export interface PingRecordsResponse {
   count: number;
   records: PingRecord[];
   tasks: PingTask[];
+  /**
+   * monitor 下发的「整个窗口」丢包率(按任务 id 给百分比,零丢包的任务不出现)。
+   * 逐桶的 loss 是各自桶内的百分比,分母已经丢了,不能拿来平均 —— 窗口丢包率只能用这个。
+   */
+  windowLoss?: Record<number, number>;
   /** 新 metric API 实际采用的聚合间隔，用于图表正确识别长区间连续点。 */
   intervalSeconds?: number;
   rangeStartMs?: number;

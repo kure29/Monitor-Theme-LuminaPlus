@@ -122,6 +122,16 @@ export function PingChart({
   } = usePingRecords(uuid, hours, active);
   // stats 随 records 同一次请求返回(getPingRecords includeStats),不再单独发起查询。
   const pingStats = data?.stats ?? EMPTY_PING_STATS;
+  // monitor 的窗口丢包率(任务 id → 百分比):逐桶 loss 不能平均,窗口值只能用它。
+  const windowLossByTask = useMemo(
+    () =>
+      new Map(
+        Object.entries(data?.windowLoss ?? {}).map(
+          ([taskId, loss]) => [Number(taskId), loss] as const,
+        ),
+      ),
+    [data?.windowLoss],
+  );
   const { resolvedAppearance } = usePreferences();
   const { w, h, ref: chartSizeRef } = useResponsiveChartSize("wide");
   const [hiddenTasks, setHiddenTasks] = useState<Set<number>>(new Set());
@@ -471,7 +481,11 @@ export function PingChart({
       const lost = server
         ? Math.max(0, server.total - server.valid)
         : fallback?.lost ?? 0;
-      const loss = server?.loss ?? (total > 0 ? fallback?.loss ?? 0 : task.loss);
+      // monitor 只给窗口丢包率(逐桶 loss 的分母已经丢了,平均它们会低估丢包),所以它在
+      // 本地统计之前。
+      const windowLoss = windowLossByTask.get(task.id);
+      const loss =
+        server?.loss ?? windowLoss ?? (total > 0 ? fallback?.loss ?? 0 : task.loss);
       return {
         ...task,
         latest,
@@ -487,7 +501,7 @@ export function PingChart({
         color: taskColors.get(task.id) ?? colorForSeries(index, tasks.length),
       };
     });
-  }, [pingStats, sortedRecords, taskColors, tasks, uuid]);
+  }, [pingStats, sortedRecords, taskColors, tasks, uuid, windowLossByTask]);
 
   const refetchAll = () => {
     void refetchRecords();
