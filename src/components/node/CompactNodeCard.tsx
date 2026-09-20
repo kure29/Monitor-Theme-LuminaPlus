@@ -25,6 +25,7 @@ import { speedRateColor, speedRateColorFromBytes } from "@/utils/metricTone";
 import { supportsFineHover } from "@/utils/mediaQuery";
 import { formatHealthBucketTooltip } from "./pingBucketText";
 import { MultiPingStatus } from "./MultiPingStatus";
+import { SimulatedPingBadge } from "./SimulatedPingBadge";
 import {
   formatCompactExpire,
   formatCompactPercent,
@@ -285,6 +286,7 @@ function HealthBars({
 function CompactHealthItem({
   icon,
   label,
+  badge,
   value,
   unit,
   color,
@@ -292,6 +294,7 @@ function CompactHealthItem({
 }: {
   icon: ReactNode;
   label: string;
+  badge?: ReactNode;
   value: string;
   unit?: string;
   color: string;
@@ -303,6 +306,7 @@ function CompactHealthItem({
         <span className="compact-node-health-label">
           {icon}
           {label}
+          {badge}
         </span>
         <strong className="compact-node-health-value tabular" style={{ color }}>
           {value}
@@ -631,14 +635,17 @@ const CompactNodeHealth = memo(function CompactNodeHealth({
       className="compact-node-bottom"
       data-ping-state={ping.loadState ?? "ready"}
       title={
-        pingError && (ping.lastValue != null || ping.loss != null)
-          ? "首页 Ping 刷新失败，显示上次数据"
-          : undefined
+        ping.simulated === true
+          ? "模拟数据：该探测点没有 monitor 上报的真实延迟"
+          : pingError && (ping.lastValue != null || ping.loss != null)
+            ? "首页 Ping 刷新失败，显示上次数据"
+            : undefined
       }
     >
       <CompactHealthItem
         icon={<Clock3 size={12} />}
         label="延迟"
+        badge={ping.simulated === true ? <SimulatedPingBadge compact /> : undefined}
         value={ping.lastValue != null ? Math.round(ping.lastValue).toString() : emptyText}
         unit={ping.lastValue != null ? "ms" : undefined}
         color={latencyColor}

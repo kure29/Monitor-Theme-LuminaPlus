@@ -4,6 +4,8 @@ LuminaPlus 是为 [monitor](https://github.com/monitor-probe/monitor) 移植的�
 
 本项目基于 [Komari-Theme-LuminaPlus](https://github.com/shanyang242/Komari-Theme-LuminaPlus) 移植，并继续遵循 MIT 许可证。
 
+维护仓库与发布地址：[kure29/Monitor-Theme-LuminaPlus](https://github.com/kure29/Monitor-Theme-LuminaPlus)
+
 ![Monitor Theme LuminaPlus 预览](docs/images/monitor-theme-preview.png)
 
 ## 当前能力
@@ -20,11 +22,31 @@ LuminaPlus 是为 [monitor](https://github.com/monitor-probe/monitor) 移植的�
 
 ## 当前限制
 
-- 主题设置暂时保存在当前浏览器的 `localStorage`，不会同步到其他访客或设备。
+- monitor 的主题契约里没有主题设置存储接口，所以主题设置默认保存在当前浏览器的
+  `localStorage`，不会自动同步到其他设备或访客；多端一致的办法见
+  [主题设置保存在哪里](#主题设置保存在哪里)。
 - monitor 目前没有公开分组、标签和公开备注字段，相应筛选项在无数据时自动隐藏。
 - monitor 不向匿名主题下发 IP 地址；本主题不依赖额外的 IP 信息插件。
 - monitor 历史接口目前不提供 Swap、连接数、进程数和 Load 历史，这些指标仍可显示实时值。
 - 首页 Ping 需要在主题设置中绑定 monitor 的探测任务；节点详情页可直接读取已分配探测任务的历史。
+- 开启「未绑定探测点显示模拟延迟」后，前端生成的数值会带「模拟」标记；它不代表真实网络质量。
+
+## 主题设置保存在哪里
+
+monitor 只给主题开放同源只读接口（`/api/me`、`/api/nodes`、`/api/nodes/{id}/metrics`、`/api/ws`），
+没有主题设置存储接口，所以本主题的设置分成两层：
+
+1. **站点默认值（可选）**：`<themes-dir>/LuminaPlus/theme-settings.json`。它与 `theme.json`
+   同一层，由 hub 当普通静态文件下发，是所有访客的默认值。
+2. **本浏览器设置**：主题设置页（首页右上角「管理」→ 主题设置）保存到 `localStorage`，
+   优先级高于站点默认值，用于在单台设备上临时调整。
+
+设置页第 10 节「配置迁移」就是这份 JSON 的导入/导出入口：在手机上「导出当前配置」→「复制」，
+换到电脑打开同一个页面「导入到表单」→「保存设置」，整套配置即搬到新设备。把同一份 JSON
+保存成主题目录里的 `theme-settings.json`，则所有访客（含未登录）都会看到这套默认值。
+
+设置内容变化后需要重新放到主题目录：monitor 后台的「上传主题包 / 从 GitHub 更新」是整体替换
+主题目录，站点默认文件不会保留；本浏览器设置不受影响。
 
 ## 开发
 
@@ -64,11 +86,17 @@ preview.png
 
 在 monitor 后台的「主题」页面上传 `theme.tar.gz`，然后选择 LuminaPlus。
 
+后台卡片上的作者、版本和「源码」链接都来自 `theme.json`；卡片右侧的刷新按钮会读取
+`url` 指向仓库的最新 release，从中取 `theme.tar.gz` 更新（版本号与 release tag 相同则跳过）。
+发布新版本：改 `theme.json` 与 `package.json` 的 `version`，提交后推送 `vX.Y.Z` tag，
+`.github/workflows/release.yml` 会自动打包并创建 release。
+
 也可以手动解压到 hub 的主题目录：
 
 ```text
 <themes-dir>/LuminaPlus/
 ├── theme.json
+├── theme-settings.json   # 可选：站点默认配置
 ├── preview.png
 └── dist/
     └── index.html
@@ -79,6 +107,15 @@ preview.png
 把图片或视频放入 `public/assets/`，重新执行 `npm run package`，然后在主题设置中填写 `/assets/<文件名>`。
 
 桌面视频建议使用短循环、无音轨的 H.264 MP4 或兼容 WebM。触屏设备、窄屏、减少动态效果和省流量模式会自动使用背景图片。
+
+桌面端与移动端背景图互为回退：只填一侧时另一侧使用同一张图，同一个背景在手机和电脑上都会生效；
+两端都填则各用各的。
+
+## 费用与账单周期
+
+续费价格按 monitor 后台的付款周期展示与摊销，识别 `monthly` / `quarterly` / `semiannual` /
+`yearly` / `biennial` / `triennial` / `once`，以及对应的中文写法与天数（30 / 90 / 180 / 365 /
+730 / 1095）。三年付会显示成 `¥1,095/3年` 并按 36 个月摊销，而不是当成一年。
 
 ## 致谢
 

@@ -85,10 +85,13 @@
                   ? value
                   : null;
               const dark = resolved === "dark";
-              const desktopImage =
+              const desktopRaw =
                 parseImage(dark ? bg.darkDesktop : bg.lightDesktop) ?? "none";
-              const mobile =
-                parseImage(dark ? bg.darkMobile : bg.lightMobile) ?? desktopImage;
+              const mobileRaw =
+                parseImage(dark ? bg.darkMobile : bg.lightMobile) ?? "none";
+              // 两端互为回退,与 utils/background.ts 的解析保持一致。
+              const desktopImage = desktopRaw === "none" ? mobileRaw : desktopRaw;
+              const mobile = mobileRaw === "none" ? desktopRaw : mobileRaw;
               const isMobile = window.matchMedia("(max-width: 720px)").matches;
               const hasCoarsePointer = window.matchMedia(
                 "(hover: none) and (pointer: coarse)",

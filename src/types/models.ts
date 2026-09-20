@@ -322,6 +322,11 @@ export type PingOverviewTaskLoadState = "pending" | "ready" | "error";
 export interface PingOverviewItem {
   client: string;
   isAssigned: boolean;
+  /**
+   * 前端生成的模拟数据(见 utils/fakePing),不是 monitor 上报的真实延迟。
+   * 只有开启「未绑定探测点显示模拟延迟」后才会出现,必须和真实数据区分展示。
+   */
+  simulated?: boolean;
   /** 当前任务本轮请求状态；模拟 Ping 不设置此字段。 */
   loadState?: PingOverviewTaskLoadState;
   lastValue: number | null;

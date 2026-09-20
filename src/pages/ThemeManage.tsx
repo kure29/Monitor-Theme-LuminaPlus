@@ -18,6 +18,7 @@ import {
   Rows3,
   Save,
   Search,
+  Share2,
   SlidersHorizontal,
   Sparkles,
   Sun,
@@ -35,9 +36,11 @@ import { useHourlyClock } from "@/hooks/useClock";
 import { queryClient } from "@/services/queryClient";
 import {
   ApiRequestError,
+  clearThemeSettings,
   getAdminClients,
   getAdminPingTasks,
   getNodes,
+  loadSiteThemeSettings,
   saveThemeSettings,
 } from "@/services/api";
 import type { AdminClient, PingTask, ThemeSettings } from "@/types/models";
@@ -81,6 +84,8 @@ import {
   DEFAULT_THEME_SETTINGS,
   normalizeHomeHeaderVisibleSeconds,
   normalizeThemeSettings,
+  parseThemeSettings,
+  serializeThemeSettings,
   type AmbientEffect,
   type BackgroundMediaType,
   type ResolvedThemeSettings,
@@ -813,6 +818,9 @@ export function ThemeManage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [accessRevoked, setAccessRevoked] = useState(false);
+  // 配置迁移面板的 JSON 文本与提示;导出/导入共用同一段文本。
+  const [transferText, setTransferText] = useState("");
+  const [transferMessage, setTransferMessage] = useState<string | null>(null);
   const savingDraftRef = useRef<ThemeDraft | null>(null);
   const editVersionRef = useRef(0);
 
@@ -887,6 +895,13 @@ export function ThemeManage() {
     queryKey: ["admin", "clients"],
     queryFn: ({ signal }) => getAdminClients({ signal }),
     staleTime: 30_000,
+    retry: false,
+  });
+  // 站点默认文件是否已提供,只用于在迁移面板里给出准确的提示。
+  const { data: siteThemeSettings } = useQuery({
+    queryKey: ["theme-site-settings"],
+    queryFn: () => loadSiteThemeSettings(),
+    staleTime: Infinity,
     retry: false,
   });
 
@@ -1244,6 +1259,45 @@ export function ThemeManage() {
     setError(null);
   };
 
+  // 配置迁移:导出当前表单为 JSON,或把粘贴的 JSON 载入表单。载入只改草稿,仍需点保存,
+  // 这样导入的内容在落盘前可以先在页面上核对。
+  const handleExportSettings = () => {
+    setTransferText(
+      serializeThemeSettings(draftThemeSettings as ThemeSettings & Record<string, unknown>),
+    );
+    setTransferMessage("已生成当前表单的配置 JSON");
+  };
+
+  const handleCopySettings = async () => {
+    if (!transferText.trim()) return;
+    try {
+      await navigator.clipboard.writeText(transferText);
+      setTransferMessage("已复制到剪贴板,可在另一台设备粘贴导入");
+    } catch {
+      setTransferMessage("复制失败:请手动全选文本框内容复制");
+    }
+  };
+
+  const handleImportSettings = () => {
+    try {
+      const imported = parseThemeSettings(transferText);
+      seedDrafts(imported);
+      setTransferMessage("已载入表单,确认无误后点右上角「保存设置」");
+    } catch (importError) {
+      setTransferMessage(
+        importError instanceof SyntaxError
+          ? "导入失败:内容不是合法的 JSON"
+          : `导入失败:${importError instanceof Error ? importError.message : "无法解析配置"}`,
+      );
+    }
+  };
+
+  const handleClearLocalSettings = async () => {
+    clearThemeSettings();
+    await queryClient.invalidateQueries({ queryKey: ["public"] });
+    setTransferMessage("已清除本浏览器保存的设置,回退到站点默认值");
+  };
+
   if (configLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -1360,7 +1414,8 @@ export function ThemeManage() {
             <span className="theme-masthead-kicker">LUMINAPLUS · 主题控制台</span>
             <h1 className="theme-masthead-title">主题设置</h1>
             <p className="theme-masthead-desc">
-              集中调整 LuminaPlus 的展示偏好与首页延迟绑定；当前版本将设置保存在此浏览器。
+              集中调整 LuminaPlus 的展示偏好与首页延迟绑定；设置保存在当前浏览器，需要多端一致时用
+              第 10 节的「配置迁移」导出后在另一台设备导入。
             </p>
           </div>
           <dl className="theme-masthead-meta">
@@ -1570,7 +1625,7 @@ export function ThemeManage() {
                 className="surface-inset w-full px-3 py-2 text-[13px] outline-none"
               />
               <span className="text-[11px] text-[var(--text-tertiary)]">
-                留空则不显示背景图；可用 <code>浅色图|深色图</code> 分别设置两种外观。
+                留空则沿用移动端背景图；可用 <code>浅色图|深色图</code> 分别设置两种外观。
               </span>
             </label>
             <label className="flex min-w-0 flex-col gap-2">
@@ -1584,7 +1639,8 @@ export function ThemeManage() {
                 className="surface-inset w-full px-3 py-2 text-[13px] outline-none"
               />
               <span className="text-[11px] text-[var(--text-tertiary)]">
-                屏宽不超过 720px 时生效；同样支持 <code>浅色图|深色图</code>。
+                屏宽不超过 720px 时生效；同样支持 <code>浅色图|深色图</code>。两端只填一侧时，
+                另一侧自动使用同一张图，因此同一个背景在手机和电脑上都生效。
               </span>
             </label>
           </div>
@@ -2159,6 +2215,9 @@ export function ThemeManage() {
           <>
             单线路模式为每个节点绑定一项 Ping 任务；开启三网模式后，大卡片和小卡片默认展示三项全局任务，也可以为每台服务器单独覆盖探测点。迷你卡片与列表仍显示节点的单线路绑定。
             {" "}
+            monitor 后台把任务绑定到节点后，还要在这里完成首页绑定，卡片才会显示该探测点的数据——
+            主题以这里的绑定为准，后台的绑定关系只决定谁会真的去测量。
+            {" "}
             如果当前还没有可用任务，请先前往
             {" "}
             <a href="/admin/ping" className="theme-manage-inline-link">
@@ -2331,7 +2390,7 @@ export function ThemeManage() {
           <ToggleRow
             field="fakePingForUnbound"
             title="未绑定探测点显示模拟延迟"
-            desc="用户主动开启后，未绑定单线路 Ping 任务的在线节点，以及三网模式中后台未绑定的探测点，都会显示前端生成的模拟数据（延迟 1-10ms、丢包 0%）。模拟数据仅用于视觉统一，不代表真实网络质量。"
+            desc="用户主动开启后，未绑定单线路 Ping 任务的在线节点，以及三网模式中没有真实样本的探测点，都会显示前端生成的模拟数据（延迟 1-10ms、丢包 0%）。这些数值会带「模拟」标记，与 monitor 上报的真实延迟区分开——它只用于视觉统一，不代表真实网络质量。"
             checked={draft.fakePingForUnbound}
             onPatch={patch}
           />
@@ -2381,6 +2440,83 @@ export function ThemeManage() {
                 />
               );
             })}
+        </div>
+      </InstancePanel>
+
+      <InstancePanel
+        kicker={<><span className="instance-panel-kicker-num">10</span>迁移</>}
+        title="配置迁移与站点默认值"
+        description={
+          <>
+            monitor 的主题契约里没有主题设置存储接口,所以设置只保存在当前浏览器:在手机上
+            保存不会自动出现在电脑上。把这里的 JSON 复制到另一台设备的同一个页面导入,即可
+            复制整套配置;同一份 JSON 放到主题目录的
+            {" "}
+            <code className="theme-manage-inline-code">theme-settings.json</code>
+            {" "}
+            (与 theme.json 同层)则会成为所有访客的默认值。
+          </>
+        }
+        aside={<Share2 size={16} />}
+      >
+        <div className="flex flex-col gap-3">
+          <label className="flex min-w-0 flex-col gap-2">
+            <span className="text-[12px] font-medium text-[var(--text-secondary)]">
+              配置 JSON
+            </span>
+            <textarea
+              value={transferText}
+              onChange={(event) => setTransferText(event.target.value)}
+              placeholder="点「导出当前配置」生成，或粘贴另一台设备导出的 JSON"
+              spellCheck={false}
+              className="surface-inset min-h-[168px] w-full resize-y px-3 py-2 font-mono text-[11px] leading-relaxed outline-none"
+              aria-label="配置 JSON"
+            />
+          </label>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportSettings}
+              className="theme-manage-button"
+            >
+              导出当前配置
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleCopySettings()}
+              disabled={!transferText.trim()}
+              className="theme-manage-button"
+            >
+              复制
+            </button>
+            <button
+              type="button"
+              onClick={handleImportSettings}
+              disabled={!transferText.trim()}
+              className="theme-manage-button"
+            >
+              导入到表单
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleClearLocalSettings()}
+              className="theme-manage-button"
+            >
+              清除本浏览器设置
+            </button>
+          </div>
+
+          <p className="text-[11px] leading-relaxed text-[var(--text-tertiary)]" role="status">
+            站点默认文件 <code className="theme-manage-inline-code">/theme-settings.json</code>:
+            {" "}
+            {siteThemeSettings == null
+              ? "检测中…"
+              : Object.keys(siteThemeSettings).length > 0
+                ? `已提供(${Object.keys(siteThemeSettings).length} 项),本浏览器保存的设置优先于它;更新或重装主题会替换整个主题目录,需要重新放回该文件`
+                : "未提供,所有访客都使用主题自带默认值"}
+            {transferMessage ? ` · ${transferMessage}` : ""}
+          </p>
         </div>
       </InstancePanel>
 

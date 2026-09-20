@@ -243,6 +243,41 @@ function readThemeSettings(): Record<string, unknown> {
   }
 }
 
+/**
+ * 站点级默认配置所在的同源静态文件。
+ *
+ * monitor 的主题契约里没有主题设置存储接口(见 monitor-theme-default 的 README),
+ * 所以「一次设置、所有设备与访客都生效」只能靠主题目录里的这个文件:
+ *
+ *     <themes-dir>/LuminaPlus/theme-settings.json
+ *
+ * 它由 hub 当普通静态文件下发(与 theme.json 同一个目录),每次读取公开配置时请求一次
+ * (hub 对非 assets 路径返回 ETag + no-cache,重复请求只是 304)。存在时它是所有访客的默认值,
+ * 本浏览器保存过的设置优先覆盖它。文件不存在时 hub 会回落到 index.html,解析失败即视为未提供。
+ */
+const SITE_SETTINGS_PATH = "/theme-settings.json";
+const SITE_SETTINGS_MAX_BYTES = 256 * 1024;
+
+export async function loadSiteThemeSettings(): Promise<Record<string, unknown>> {
+  try {
+    const response = await fetchWithTimeout(
+      SITE_SETTINGS_PATH,
+      { credentials: "same-origin", headers: { Accept: "application/json" } },
+      DEFAULT_API_TIMEOUT_MS,
+    );
+    if (!response.ok) return {};
+    const text = await response.text();
+    if (text.length > SITE_SETTINGS_MAX_BYTES) return {};
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    // 文件缺失、被 WAF 拦成 HTML、离线:一律按「没有站点默认配置」处理,继续用本机设置。
+    return {};
+  }
+}
+
 export function monitorNodeToInfo(node: MonitorNode): NodeInfo {
   return {
     uuid: String(node.id),
@@ -367,7 +402,10 @@ export async function getMe(options?: ApiCallOptions): Promise<Me> {
 }
 
 export async function getPublic(options?: ApiCallOptions): Promise<PublicConfig> {
-  const me = await requestJson<MonitorMe>("/api/me", options);
+  const [me, siteSettings] = await Promise.all([
+    requestJson<MonitorMe>("/api/me", options),
+    loadSiteThemeSettings(),
+  ]);
   return {
     sitename: string(me.site_name) || "Monitor",
     description: "服务器运行状态",
@@ -382,7 +420,8 @@ export async function getPublic(options?: ApiCallOptions): Promise<PublicConfig>
     metric_retention_days: 7,
     custom_head: "",
     custom_body: "",
-    theme_settings: readThemeSettings(),
+    // 本机保存的设置优先于站点默认文件,让站长在任意设备上的临时调整仍然生效。
+    theme_settings: { ...siteSettings, ...readThemeSettings() },
   };
 }
 
@@ -584,6 +623,16 @@ export async function saveThemeSettings(
 ): Promise<void> {
   if (typeof localStorage === "undefined") return;
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+/** 丢弃本浏览器保存的主题设置,让站点默认文件(若存在)重新生效。 */
+export function clearThemeSettings(): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.removeItem(SETTINGS_KEY);
+  } catch {
+    // 存储不可用时本来就没有本机设置可清。
+  }
 }
 
 export function prewarmPingOverviewDependencies() {

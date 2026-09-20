@@ -920,6 +920,15 @@ body::after {
   color: color-mix(in srgb, var(--progress-cpu) 78%, white 22%);
 }
 
+.theme-manage-inline-code {
+  padding: 1px 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--surface-elev) 82%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.94em;
+}
+
 .theme-manage-empty-state {
   display: flex;
   flex-wrap: wrap;

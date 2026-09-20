@@ -34,16 +34,38 @@ function isLongTermExpire(value: string | number | null | undefined) {
 
 type BillingCycleKind = "month" | "quarter" | "halfYear" | "year" | "lifetime";
 
+export interface ClassifiedBillingCycleWord {
+  kind: BillingCycleKind;
+  /** kind === "year" 时的整年数;两年付/三年付按 2/3 摊销,而不是当成年付。 */
+  years?: number;
+}
+
 /**
  * 把自由文本的账单周期关键词(须预先 lowercase/trim)归类成标准周期,识别不出时返回 null。
  * 这里的标签格式化和 utils/cost.ts 里的天数解析共用它,让这套正则只存在一处。
  */
-export function classifyBillingCycleWord(normalized: string): BillingCycleKind | null {
-  if (/^(monthly|month|mo|月|每月|月付)$/.test(normalized)) return "month";
-  if (/^(quarterly|quarter|季|季度|每季|季付)$/.test(normalized)) return "quarter";
-  if (/^(semi-?annual(ly)?|halfyear|half-year|半年|半年付)$/.test(normalized)) return "halfYear";
-  if (/^(annual(ly)?|yearly|year|yr|年|每年|年付)$/.test(normalized)) return "year";
-  if (/^(lifetime|once|one-time|永久|一次性|买断)$/.test(normalized)) return "lifetime";
+export function classifyBillingCycleWord(
+  normalized: string,
+): ClassifiedBillingCycleWord | null {
+  if (/^(monthly|month|mo|月|每月|月付)$/.test(normalized)) return { kind: "month" };
+  if (/^(quarterly|quarter|季|季度|每季|季付)$/.test(normalized)) return { kind: "quarter" };
+  if (/^(semi-?annual(ly)?|halfyear|half-year|半年|半年付)$/.test(normalized)) {
+    return { kind: "halfYear" };
+  }
+  // monitor 后台的付款周期选项是 biennial/triennial(见 web-admin 的 CYCLES),它们是
+  // 整年倍数而不是年付:当成 365 天会把三年付 1095 元显示成「1095/年」,月摊也会高三倍。
+  if (/^(biennial(ly)?|biannual(ly)?|two-?year(ly)?|2-?year(ly)?|两年|两年付|2年|2年付)$/.test(normalized)) {
+    return { kind: "year", years: 2 };
+  }
+  if (/^(triennial(ly)?|three-?year(ly)?|3-?year(ly)?|三年|三年付|3年|3年付)$/.test(normalized)) {
+    return { kind: "year", years: 3 };
+  }
+  if (/^(annual(ly)?|yearly|year|yr|年|每年|年付)$/.test(normalized)) {
+    return { kind: "year", years: 1 };
+  }
+  if (/^(lifetime|once|one-time|永久|一次性|买断)$/.test(normalized)) {
+    return { kind: "lifetime" };
+  }
   return null;
 }
 
@@ -80,7 +102,8 @@ export function normalizeBillingCycle(
     // numeric <= 0(如 0)落到下面的标签兜底分支。
   }
 
-  switch (classifyBillingCycleWord(raw.toLowerCase())) {
+  const word = classifyBillingCycleWord(raw.toLowerCase());
+  switch (word?.kind) {
     case "month":
       return { kind: "month", days: 30 };
     case "quarter":
@@ -90,6 +113,7 @@ export function normalizeBillingCycle(
     case "lifetime":
       return { kind: "lifetime", days: -1 };
     case "year":
+      return { kind: "year", days: 365 * (word.years ?? 1), years: word.years ?? 1 };
     default:
       return { kind: "year", days: 365, years: 1 };
   }

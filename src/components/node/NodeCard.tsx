@@ -43,6 +43,7 @@ import {
 import { IpStackBadges } from "./IpStackBadges";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { MultiPingStatus } from "./MultiPingStatus";
+import { SimulatedPingBadge } from "./SimulatedPingBadge";
 import { formatHealthBucketTooltip } from "./pingBucketText";
 import { clsx } from "clsx";
 import type { NodeInfo, NodeMetrics, PingOverviewBucket, PingOverviewItem, TrafficTrendSample } from "@/types/models";
@@ -469,14 +470,17 @@ const NodeHealthSection = memo(function NodeHealthSection({
           <div className="server-health-label">
             <Clock3 size={13} strokeWidth={2} />
             <span>延迟</span>
+            {ping.simulated === true && <SimulatedPingBadge />}
           </div>
           <span
             className="server-health-value tabular"
             style={{ color: latencyColor }}
             title={
-              pingError && ping.lastValue != null
-                ? "首页 Ping 刷新失败，显示上次数据"
-                : undefined
+              ping.simulated === true
+                ? "模拟数据：该探测点没有 monitor 上报的真实延迟"
+                : pingError && ping.lastValue != null
+                  ? "首页 Ping 刷新失败，显示上次数据"
+                  : undefined
             }
           >
             {ping.lastValue != null ? (
@@ -513,14 +517,17 @@ const NodeHealthSection = memo(function NodeHealthSection({
           <div className="server-health-label">
             <Unplug size={13} strokeWidth={2} />
             <span>丢包率</span>
+            {ping.simulated === true && <SimulatedPingBadge />}
           </div>
           <span
             className="server-health-value tabular"
             style={{ color: lossColor }}
             title={
-              pingError && ping.loss != null
-                ? "首页 Ping 刷新失败，显示上次数据"
-                : undefined
+              ping.simulated === true
+                ? "模拟数据：该探测点没有 monitor 上报的真实延迟"
+                : pingError && ping.loss != null
+                  ? "首页 Ping 刷新失败，显示上次数据"
+                  : undefined
             }
           >
             {ping.loss != null ? (

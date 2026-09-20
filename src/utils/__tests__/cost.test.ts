@@ -311,6 +311,27 @@ describe("calculateCostSummary — annualized total & cycle validation", () => {
     expect(summary.monthlyCny).toBeCloseTo(140, 6);
   });
 
+  it("amortizes monitor's triennial cycle over 36 months (regression)", () => {
+    // 三年付 1095 CNY:月摊按 1095 天(36 个月)算,而不是当成一年 → 30.42 元/月。
+    const summary = calculateCostSummary(
+      [node({ price: 1095, currency: "CNY", billing_cycle: "triennial" })],
+      [],
+      RATES,
+    );
+    expect(summary.details[0]?.billingCycleDays).toBe(1095);
+    expect(summary.monthlyCny).toBeCloseTo(1095 / 36, 6);
+    // totalCny 是年化总额:1095 元 ÷ 3 年 = 365 元/年。
+    expect(summary.totalCny).toBeCloseTo(1095 / 3, 6);
+
+    const biennial = calculateCostSummary(
+      [node({ price: 1000, currency: "CNY", billing_cycle: "biennial" })],
+      [],
+      RATES,
+    );
+    expect(biennial.details[0]?.billingCycleDays).toBe(730);
+    expect(biennial.monthlyCny).toBeCloseTo(1000 / 24, 6);
+  });
+
   it("keeps lifetime (-1) purchases out of recurring totals", () => {
     const summary = calculateCostSummary(
       [node({ uuid: "life", price: 99, currency: "USD", billing_cycle: "lifetime" })],

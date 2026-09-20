@@ -21,6 +21,8 @@ describe("buildFakePingItem", () => {
   it("值域固定在 1-10ms,丢包恒为 0,且伪装成已绑定", () => {
     const item = buildFakePingItem(UUID, MINUTE_INDEX);
     expect(item.isAssigned).toBe(true);
+    // 但必须自带标记:展示层据此标注「模拟」,避免被当成 monitor 的真实延迟。
+    expect(item.simulated).toBe(true);
     expect(item.loss).toBe(0);
     expect(item.client).toBe(UUID);
     expect(item.samples).toHaveLength(60);
@@ -79,6 +81,7 @@ describe("buildFakePingItem", () => {
     expect(line.taskName).toBe("联通");
     expect(line.client).toBe(UUID);
     expect(line.isAssigned).toBe(true);
+    expect(line.simulated).toBe(true);
     expect(line.loadState).toBe("ready");
     expect(line.loss).toBe(0);
     expect(line.samples).toHaveLength(60);

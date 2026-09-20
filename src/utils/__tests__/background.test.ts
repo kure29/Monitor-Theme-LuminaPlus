@@ -306,6 +306,55 @@ describe("buildBackgroundCache", () => {
     expect(cache?.darkMobile).toBe('url("/dark.webp")');
   });
 
+  it("falls back in both directions so one image covers desktop and mobile (regression)", () => {
+    // 只在手机端填了背景图时,电脑端也必须显示它 —— 以前的单向回退会让两端看起来
+    // 需要分别设置。
+    const mobileOnly = buildBackgroundCache({
+      ...base,
+      backgroundImageMobile: "/portrait.webp",
+    });
+    expect(mobileOnly?.lightDesktop).toBe('url("/portrait.webp")');
+    expect(mobileOnly?.lightMobile).toBe('url("/portrait.webp")');
+
+    const desktopOnly = buildBackgroundCache({
+      ...base,
+      backgroundImage: "/wide.webp",
+    });
+    expect(desktopOnly?.lightDesktop).toBe('url("/wide.webp")');
+    expect(desktopOnly?.lightMobile).toBe('url("/wide.webp")');
+
+    // 两端各自配置时保持各自的图,不回退覆盖。
+    const both = buildBackgroundCache({
+      ...base,
+      backgroundImage: "/wide.webp",
+      backgroundImageMobile: "/portrait.webp",
+    });
+    expect(both?.lightDesktop).toBe('url("/wide.webp")');
+    expect(both?.lightMobile).toBe('url("/portrait.webp")');
+  });
+
+  it("applies the fallback to caches stored before the two-way rule existed", () => {
+    // 旧版本写入的 v2 缓存里 lightDesktop 是 "none",读的一侧仍要能让桌面端用移动端图。
+    const { properties } = installDocumentStyle();
+    applyBackgroundCache(
+      {
+        v: 2,
+        desktopVideo: false,
+        size: "cover",
+        position: "center",
+        alpha: "100",
+        scrim: "",
+        lightDesktop: "none",
+        lightMobile: 'url("/portrait.webp")',
+        darkDesktop: "none",
+        darkMobile: "none",
+      },
+      "light",
+      { isMobile: false },
+    );
+    expect(properties.get("--bg-image-desktop")).toBe('url("/portrait.webp")');
+  });
+
   it("keeps video URLs out of the first-frame image cache", () => {
     const videoUrl = "https://cdn.example/background.mp4?signature=secret";
     const cache = buildBackgroundCache({
@@ -394,10 +443,11 @@ describe("applyBackgroundCache", () => {
     expect(cache).not.toBeNull();
     const { properties } = installDocumentStyle();
 
+    // 浅色只有移动端图:桌面端回退到它,所以两个视图都有背景。
     applyBackgroundCache(cache, "light", { isMobile: false });
-    expect(properties.get("--bg-image-desktop")).toBe("none");
+    expect(properties.get("--bg-image-desktop")).toBe('url("/mobile-light.webp")');
     expect(properties.get("--bg-image-mobile")).toBe('url("/mobile-light.webp")');
-    expect(properties.has("--surface-alpha")).toBe(false);
+    expect(properties.get("--surface-alpha")).toBe("50");
 
     applyBackgroundCache(cache, "light", { isMobile: true });
     expect(properties.get("--surface-alpha")).toBe("50");

@@ -186,10 +186,20 @@ function toCssUrl(url: string): string {
 export function buildBackgroundCache(settings: BackgroundSettingsInput): BackgroundCache | null {
   // 视频 URL 不进入首帧缓存；只记录视频模式，以便加载阶段隐藏桌面回退图。
   if (!settings.enableBackgroundImage) return null;
-  const lightDesktop = resolveBackgroundUrl(settings.backgroundImage, "light");
-  const darkDesktop = resolveBackgroundUrl(settings.backgroundImage, "dark");
-  const lightMobile = resolveBackgroundUrl(settings.backgroundImageMobile, "light") || lightDesktop;
-  const darkMobile = resolveBackgroundUrl(settings.backgroundImageMobile, "dark") || darkDesktop;
+  const desktopImage = {
+    light: resolveBackgroundUrl(settings.backgroundImage, "light"),
+    dark: resolveBackgroundUrl(settings.backgroundImage, "dark"),
+  };
+  const mobileImage = {
+    light: resolveBackgroundUrl(settings.backgroundImageMobile, "light"),
+    dark: resolveBackgroundUrl(settings.backgroundImageMobile, "dark"),
+  };
+  // 桌面端与移动端互为回退:只填了一侧时,另一侧用同一张图。以前只有「移动端回落桌面端」,
+  // 于是只在手机端填了背景的站点在电脑端完全没有背景,看起来像两端必须分别设置。
+  const lightDesktop = desktopImage.light || mobileImage.light;
+  const darkDesktop = desktopImage.dark || mobileImage.dark;
+  const lightMobile = mobileImage.light || desktopImage.light;
+  const darkMobile = mobileImage.dark || desktopImage.dark;
   const hasVideo =
     settings.backgroundMediaType === "video" &&
     Boolean(settings.backgroundVideo || settings.backgroundVideoDark);
@@ -239,8 +249,10 @@ export function applyBackgroundCache(
     return;
   }
   const dark = appearance === "dark";
-  const desktop = dark ? cache.darkDesktop : cache.lightDesktop;
-  const mobile = (dark ? cache.darkMobile : cache.lightMobile) || desktop;
+  const desktopImage = dark ? cache.darkDesktop : cache.lightDesktop;
+  const mobile = (dark ? cache.darkMobile : cache.lightMobile) || desktopImage;
+  // 旧缓存(v2 之前只写移动端图)也要在桌面端显示出来,所以回退同时做在读的一侧。
+  const desktop = desktopImage !== "none" ? desktopImage : mobile;
   const videoState = options.videoState ?? "inactive";
   const suppressDesktopImage =
     !options.isMobile && (videoState === "loading" || videoState === "playing");

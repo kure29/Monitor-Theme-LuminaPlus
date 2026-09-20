@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatBillingCycle, formatRenewalPrice } from "@/utils/billing";
+import {
+  formatBillingCycle,
+  formatRenewalPrice,
+  normalizeBillingCycle,
+} from "@/utils/billing";
 
 function inDays(days: number) {
   return new Date(Date.now() + days * 86_400_000).toISOString();
@@ -17,6 +21,18 @@ describe("formatBillingCycle", () => {
   it("renders whole-year multiples", () => {
     expect(formatBillingCycle(730)).toBe("2年");
     expect(formatBillingCycle(1095)).toBe("3年");
+  });
+
+  it("maps monitor's multi-year payment cycles (regression)", () => {
+    // monitor 后台的付款周期下拉框写入的是这些词,三年付 1095 元曾被显示成「1095/年」。
+    expect(formatBillingCycle("triennial")).toBe("3年");
+    expect(formatBillingCycle("biennial")).toBe("2年");
+    expect(formatBillingCycle("三年付")).toBe("3年");
+    expect(formatBillingCycle("两年付")).toBe("2年");
+    expect(formatBillingCycle("semiannual")).toBe("半年");
+    expect(formatBillingCycle("once")).toBe("永久");
+    expect(normalizeBillingCycle("triennial")).toEqual({ kind: "year", days: 1095, years: 3 });
+    expect(normalizeBillingCycle("biennial")).toEqual({ kind: "year", days: 730, years: 2 });
   });
 
   it("treats -1 as a lifetime cycle (regression)", () => {
@@ -87,5 +103,12 @@ describe("formatRenewalPrice", () => {
     expect(formatRenewalPrice({ price: 10, currency: "USD", billing_cycle: "month" })).toBe("$10/月");
     expect(formatRenewalPrice({ price: 19.9, currency: "EUR", billing_cycle: "year" })).toBe("€19.90/年");
     expect(formatRenewalPrice({ price: 19.9, currency: "¥", billing_cycle: -1 })).toBe("¥19.90/永久");
+  });
+
+  it("keeps monitor's triennial price on its own cycle (regression)", () => {
+    // 三年付 1095:整期价格要配三年,而不是被摊成「1095/年」。
+    expect(
+      formatRenewalPrice({ price: 1095, currency: "CNY", billing_cycle: "triennial" }),
+    ).toBe("¥1,095/3年");
   });
 });

@@ -7,6 +7,7 @@ import { latencyHeatColor, lossHeatColor } from "@/utils/metricTone";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { LatencyBars } from "./LatencyBars";
 import { QualityBars } from "./QualityBars";
+import { SimulatedPingBadge } from "./SimulatedPingBadge";
 import { formatHealthBucketTooltip } from "./pingBucketText";
 
 type MultiPingStatusDensity = "large" | "compact";
@@ -29,21 +30,22 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
   const isLoading = line.loadState === "pending";
   const isError = line.loadState === "error";
   const isUnassigned = line.isAssigned === false;
+  const isSimulated = line.simulated === true;
   const staleError = isError && (line.lastValue != null || line.loss != null);
-  const latencyLabel =
-    isUnassigned
-      ? "后台未绑定"
-      : isLoading && line.lastValue == null
+  // 未绑定的判定在公开页面来自「最近窗口内没有该探测点的样本」,后台的真实绑定关系只有
+  // 管理员接口知道,所以这里只说「无数据」,不断言后台状态。
+  const latencyLabel = isUnassigned
+    ? "无数据"
+    : isLoading && line.lastValue == null
       ? "加载中"
       : isError && line.lastValue == null
         ? "加载失败"
         : line.lastValue == null
           ? "无样本"
           : `${Math.round(line.lastValue)}ms`;
-  const lossLabel =
-    isUnassigned
-      ? "后台未绑定"
-      : isLoading && line.loss == null
+  const lossLabel = isUnassigned
+    ? "无数据"
+    : isLoading && line.loss == null
       ? "加载中"
       : isError && line.loss == null
         ? "加载失败"
@@ -77,8 +79,8 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
       data-assigned={line.isAssigned ? "true" : "false"}
       title={
         isUnassigned
-          ? `${line.taskName} · 后台未绑定该服务器`
-          : `${line.taskName} · 延迟 ${latencyLabel} · 丢包 ${lossLabel}${
+          ? `${line.taskName} · 最近窗口内没有该探测点的样本(后台可能未绑定,或节点未上报)`
+          : `${line.taskName}${isSimulated ? " · 模拟数据" : ""} · 延迟 ${latencyLabel} · 丢包 ${lossLabel}${
               staleError ? " · 刷新失败，显示上次数据" : ""
             }`
       }
@@ -92,7 +94,8 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
         {metric === "latency" && (
           <span className="multi-ping-name-wrap">
             <span className="multi-ping-name">{line.taskName}</span>
-            {isUnassigned && <span className="multi-ping-unassigned">未绑定</span>}
+            {isUnassigned && <span className="multi-ping-unassigned">无数据</span>}
+            {isSimulated && <SimulatedPingBadge />}
           </span>
         )}
         <strong
