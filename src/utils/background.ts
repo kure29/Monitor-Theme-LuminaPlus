@@ -4,6 +4,7 @@ export type ResolvedAppearance = Exclude<Appearance, "system">;
 
 export const DEFAULT_BACKGROUND_ALIGNMENT = "cover,center";
 export const DEFAULT_SURFACE_OPACITY = 100;
+export const DEFAULT_BACKGROUND_SCRIM = 0;
 export const DEFAULT_BACKGROUND_VIDEO_URL =
   "/assets/LanternRivers_1080p15fps2Mbps3s.mp4";
 
@@ -143,12 +144,35 @@ export function normalizeSurfaceOpacity(value: unknown): number {
   return Math.min(100, Math.max(0, Math.round(num)));
 }
 
+/**
+ * 背景遮罩强度(0–100):在背景图/视频之上叠一层 `--bg-0`,暗色模式压暗、亮色模式提亮。
+ * 0 = 不加遮罩(默认,保持升级前的观感)。
+ */
+export function normalizeBackgroundScrim(value: unknown): number {
+  const num =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value)
+        : Number.NaN;
+  if (!Number.isFinite(num)) return DEFAULT_BACKGROUND_SCRIM;
+  return Math.min(100, Math.max(0, Math.round(num)));
+}
+
 /** 由卡片不透明度推导 0–16% 的背景遮罩；高于阈值时不绘制。 */
 export function computeBackgroundScrim(opacity: unknown): number {
   const resolved = normalizeSurfaceOpacity(opacity);
   if (resolved >= SURFACE_SCRIM_THRESHOLD) return 0;
   const t = (SURFACE_SCRIM_THRESHOLD - resolved) / SURFACE_SCRIM_THRESHOLD; // 取值 0–1
   return Math.round(t * 16);
+}
+
+/** 把遮罩强度写成 CSS;0 返回空串(用 transparent 兜底的那个变量值)。 */
+export function backgroundScrimCss(percent: number): string {
+  const resolved = normalizeBackgroundScrim(percent);
+  return resolved > 0
+    ? `color-mix(in srgb, var(--bg-0) ${resolved}%, transparent)`
+    : "";
 }
 
 // Legacy key retained so existing users keep their saved background after the rename.
@@ -163,6 +187,9 @@ interface BackgroundSettingsInput {
   backgroundVideoDark: string;
   backgroundAlignment: string;
   surfaceOpacity: number;
+  /** 浅色 / 深色模式各自的背景遮罩强度(0–100)。 */
+  backgroundScrim?: number;
+  backgroundScrimDark?: number;
 }
 
 /** 可直接写入 CSS 的首帧背景缓存。 */
@@ -172,7 +199,10 @@ interface BackgroundCache {
   size: string;
   position: string;
   alpha: string;
+  /** 浅色模式的遮罩 CSS(含卡片透明度派生出的可读性遮罩)。 */
   scrim: string;
+  /** 深色模式的遮罩 CSS;旧缓存没有这个字段,读的一侧回退到 scrim。 */
+  scrimDark?: string;
   lightDesktop: string;
   lightMobile: string;
   darkDesktop: string;
@@ -207,16 +237,18 @@ export function buildBackgroundCache(settings: BackgroundSettingsInput): Backgro
 
   const { size, position } = parseBackgroundAlignment(settings.backgroundAlignment);
   const scrimPct = computeBackgroundScrim(settings.surfaceOpacity);
+  // 卡片透明时会自动叠一层可读性遮罩,站长自己的遮罩与之取较大值:两个值都是"压在背景上的
+  // 底色浓度",相加会让 100% 的遮罩和自动遮罩叠加成更黑的一层,不好预期。
+  const lightScrimPct = Math.max(scrimPct, normalizeBackgroundScrim(settings.backgroundScrim));
+  const darkScrimPct = Math.max(scrimPct, normalizeBackgroundScrim(settings.backgroundScrimDark));
   return {
     v: 2,
     desktopVideo: hasVideo,
     size,
     position,
     alpha: String(normalizeSurfaceOpacity(settings.surfaceOpacity)),
-    scrim:
-      scrimPct > 0
-        ? `color-mix(in srgb, var(--bg-0) ${scrimPct}%, transparent)`
-        : "",
+    scrim: backgroundScrimCss(lightScrimPct),
+    scrimDark: backgroundScrimCss(darkScrimPct),
     lightDesktop: toCssUrl(lightDesktop),
     lightMobile: toCssUrl(lightMobile),
     darkDesktop: toCssUrl(darkDesktop),
@@ -260,13 +292,15 @@ export function applyBackgroundCache(
   const selectedImage = options.isMobile ? mobile : renderedDesktop;
   const videoIsPlaying = !options.isMobile && videoState === "playing";
   const active = videoIsPlaying || selectedImage !== "none";
+  // 深色模式用深色遮罩;旧缓存(v2 之前只写了一个 scrim)继续沿用同一层。
+  const scrim = (dark ? (cache.scrimDark ?? cache.scrim) : cache.scrim) ?? "";
   root.style.setProperty("--bg-image-desktop", renderedDesktop);
   root.style.setProperty("--bg-image-mobile", mobile);
   root.style.setProperty("--bg-size", cache.size);
   root.style.setProperty("--bg-position", cache.position);
   if (active) {
     root.style.setProperty("--surface-alpha", cache.alpha);
-    if (cache.scrim) root.style.setProperty("--bg-scrim", cache.scrim);
+    if (scrim) root.style.setProperty("--bg-scrim", scrim);
     else root.style.removeProperty("--bg-scrim");
   } else {
     root.style.removeProperty("--surface-alpha");

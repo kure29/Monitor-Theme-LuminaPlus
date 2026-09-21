@@ -31,6 +31,8 @@ export function BackgroundLayer() {
     backgroundVideoDark,
     backgroundAlignment,
     surfaceOpacity,
+    backgroundScrim,
+    backgroundScrimDark,
     isReady,
   } = useThemeSettings();
   const isMobile = useMediaQuery(MOBILE_VIEWPORT_QUERY, true);
@@ -74,6 +76,8 @@ export function BackgroundLayer() {
         backgroundVideoDark,
         backgroundAlignment,
         surfaceOpacity,
+        backgroundScrim,
+        backgroundScrimDark,
       }),
     [
       enableBackgroundImage,
@@ -84,6 +88,8 @@ export function BackgroundLayer() {
       backgroundVideoDark,
       backgroundAlignment,
       surfaceOpacity,
+      backgroundScrim,
+      backgroundScrimDark,
     ],
   );
 

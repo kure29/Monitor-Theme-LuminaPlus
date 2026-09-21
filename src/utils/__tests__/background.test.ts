@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyBackgroundCache,
+  backgroundScrimCss,
   buildBackgroundCache,
   computeBackgroundScrim,
   DEFAULT_BACKGROUND_ALIGNMENT,
+  DEFAULT_BACKGROUND_SCRIM,
   DEFAULT_SURFACE_OPACITY,
   normalizeBackgroundAlignment,
+  normalizeBackgroundScrim,
   normalizeBackgroundUrl,
   normalizeBackgroundVideoUrl,
   normalizeSurfaceOpacity,
@@ -402,6 +405,49 @@ describe("buildBackgroundCache", () => {
     expect(translucent?.alpha).toBe("50");
     expect(translucent?.scrim).toContain("color-mix");
   });
+
+  it("keeps the mask off by default and applies the configured strength per appearance", () => {
+    expect(DEFAULT_BACKGROUND_SCRIM).toBe(0);
+    expect(buildBackgroundCache({ ...base, backgroundImage: "/a.webp" })?.scrim).toBe("");
+    expect(buildBackgroundCache({ ...base, backgroundImage: "/a.webp" })?.scrimDark).toBe("");
+
+    const masked = buildBackgroundCache({
+      ...base,
+      backgroundImage: "/bright.webp",
+      backgroundScrim: 20,
+      backgroundScrimDark: 60,
+    });
+    expect(masked?.scrim).toBe("color-mix(in srgb, var(--bg-0) 20%, transparent)");
+    expect(masked?.scrimDark).toBe("color-mix(in srgb, var(--bg-0) 60%, transparent)");
+  });
+
+  it("takes the larger of the readability scrim and the configured mask, never the sum", () => {
+    // 卡片越透明,自动可读性遮罩越强;站长自己的遮罩更大时以它为准。
+    const auto = buildBackgroundCache({
+      ...base,
+      backgroundImage: "/a.webp",
+      surfaceOpacity: 0,
+    })?.scrim;
+    expect(auto).toBe("color-mix(in srgb, var(--bg-0) 16%, transparent)");
+
+    const larger = buildBackgroundCache({
+      ...base,
+      backgroundImage: "/a.webp",
+      surfaceOpacity: 0,
+      backgroundScrim: 40,
+    })?.scrim;
+    expect(larger).toBe("color-mix(in srgb, var(--bg-0) 40%, transparent)");
+  });
+
+  it("normalizes the mask strength and renders its CSS", () => {
+    expect(normalizeBackgroundScrim(undefined)).toBe(0);
+    expect(normalizeBackgroundScrim("55")).toBe(55);
+    expect(normalizeBackgroundScrim(140)).toBe(100);
+    expect(normalizeBackgroundScrim(-20)).toBe(0);
+    expect(normalizeBackgroundScrim("nope")).toBe(0);
+    expect(backgroundScrimCss(0)).toBe("");
+    expect(backgroundScrimCss(30)).toContain("30%");
+  });
 });
 
 describe("applyBackgroundCache", () => {
@@ -458,6 +504,35 @@ describe("applyBackgroundCache", () => {
     expect(properties.get("--bg-image-mobile")).toBe('url("/mobile-dark.webp")');
     expect(properties.get("--bg-size")).toBe("contain");
     expect(properties.get("--bg-position")).toBe("bottom");
+  });
+
+  it("writes the mask of the current appearance, and reuses one scrim for legacy caches", () => {
+    const cache = buildBackgroundCache({
+      ...base,
+      backgroundImage: "/bright.webp",
+      backgroundScrim: 15,
+      backgroundScrimDark: 65,
+    });
+    expect(cache).not.toBeNull();
+    const { properties } = installDocumentStyle();
+
+    applyBackgroundCache(cache, "light", { isMobile: false });
+    expect(properties.get("--bg-scrim")).toBe(
+      "color-mix(in srgb, var(--bg-0) 15%, transparent)",
+    );
+
+    applyBackgroundCache(cache, "dark", { isMobile: false });
+    expect(properties.get("--bg-scrim")).toBe(
+      "color-mix(in srgb, var(--bg-0) 65%, transparent)",
+    );
+
+    // 旧版本的缓存只有一个 scrim 字段,深色模式继续沿用它,而不是突然变成无遮罩。
+    const legacy: Record<string, unknown> = { ...cache };
+    delete legacy.scrimDark;
+    applyBackgroundCache(legacy as never, "dark", { isMobile: false });
+    expect(properties.get("--bg-scrim")).toBe(
+      "color-mix(in srgb, var(--bg-0) 15%, transparent)",
+    );
   });
 
   it("removes stale surface variables when the selected image is none", () => {

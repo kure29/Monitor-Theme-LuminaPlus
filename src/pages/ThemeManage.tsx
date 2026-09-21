@@ -345,6 +345,8 @@ function pickManagedThemeSettings(settings: ResolvedThemeSettings) {
     backgroundVideoDark: settings.backgroundVideoDark,
     backgroundAlignment: settings.backgroundAlignment,
     surfaceOpacity: settings.surfaceOpacity,
+    backgroundScrim: settings.backgroundScrim,
+    backgroundScrimDark: settings.backgroundScrimDark,
     enableAmbientEffect: settings.enableAmbientEffect,
     ambientEffect: settings.ambientEffect,
   };
@@ -1754,6 +1756,73 @@ export function ThemeManage() {
                 : " 需先在上方设置自定义背景后才会生效。"}
             </span>
           </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="surface-inset flex flex-col gap-3 px-4 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-[13px] font-semibold text-[var(--text-primary)]">
+                  浅色模式遮罩
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    inputMode="numeric"
+                    value={draft.backgroundScrim}
+                    onChange={(event) => {
+                      if (event.target.value.trim() === "") return;
+                      const next = Number(event.target.value);
+                      if (!Number.isFinite(next)) return;
+                      patch("backgroundScrim", Math.min(100, Math.max(0, Math.round(next))));
+                    }}
+                    aria-label="浅色模式背景遮罩百分比"
+                    className="surface-inset w-20 px-3 py-2 text-right text-[13px] tabular outline-none"
+                  />
+                  <span className="text-[13px] font-medium text-[var(--text-tertiary)]">%</span>
+                </span>
+              </div>
+              <span className="text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+                在背景图上叠一层主题底色，0 = 不叠加。浅色模式用底色提亮，适合背景图偏暗或文字看不清时。
+              </span>
+            </div>
+            <div className="surface-inset flex flex-col gap-3 px-4 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-[13px] font-semibold text-[var(--text-primary)]">
+                  深色模式遮罩
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    inputMode="numeric"
+                    value={draft.backgroundScrimDark}
+                    onChange={(event) => {
+                      if (event.target.value.trim() === "") return;
+                      const next = Number(event.target.value);
+                      if (!Number.isFinite(next)) return;
+                      patch("backgroundScrimDark", Math.min(100, Math.max(0, Math.round(next))));
+                    }}
+                    aria-label="深色模式背景遮罩百分比"
+                    className="surface-inset w-20 px-3 py-2 text-right text-[13px] tabular outline-none"
+                  />
+                  <span className="text-[13px] font-medium text-[var(--text-tertiary)]">%</span>
+                </span>
+              </div>
+              <span className="text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+                深色模式下压暗背景、保护眼睛；背景图偏亮时 40%–70% 比较合适。100% = 完全盖住背景图。
+              </span>
+            </div>
+          </div>
+
+          {hasBackgroundMedia && (
+            <span className="text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+              卡片透明度低于 95 时会自动叠加一层可读性遮罩，此时最终浓度取两者中较大的一个，不会叠加成双倍。
+            </span>
+          )}
         </div>
       </InstancePanel>
 

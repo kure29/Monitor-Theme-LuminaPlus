@@ -1,9 +1,11 @@
 import type { ThemeSettings } from "@/types/models";
 import {
   DEFAULT_BACKGROUND_ALIGNMENT,
+  DEFAULT_BACKGROUND_SCRIM,
   DEFAULT_BACKGROUND_VIDEO_URL,
   DEFAULT_SURFACE_OPACITY,
   normalizeBackgroundAlignment,
+  normalizeBackgroundScrim,
   normalizeBackgroundUrl,
   normalizeBackgroundVideoUrl,
   normalizeSurfaceOpacity,
@@ -101,6 +103,9 @@ export interface ResolvedThemeSettings {
   backgroundVideoDark: string;
   backgroundAlignment: string;
   surfaceOpacity: number;
+  /** 背景遮罩强度(0–100):浅色模式用 --bg-0 提亮,深色模式压暗,保护眼睛。 */
+  backgroundScrim: number;
+  backgroundScrimDark: number;
   enableAmbientEffect: boolean;
   ambientEffect: AmbientEffect;
 }
@@ -154,6 +159,8 @@ export const DEFAULT_THEME_SETTINGS: ResolvedThemeSettings = {
   backgroundVideoDark: "",
   backgroundAlignment: DEFAULT_BACKGROUND_ALIGNMENT,
   surfaceOpacity: DEFAULT_SURFACE_OPACITY,
+  backgroundScrim: DEFAULT_BACKGROUND_SCRIM,
+  backgroundScrimDark: DEFAULT_BACKGROUND_SCRIM,
   enableAmbientEffect: false,
   ambientEffect: "sakura",
 };
@@ -329,6 +336,9 @@ export function normalizeThemeSettings(
     backgroundVideoDark: normalizeBackgroundVideoUrl(settings?.backgroundVideoDark),
     backgroundAlignment: normalizeBackgroundAlignment(settings?.backgroundAlignment),
     surfaceOpacity: normalizeSurfaceOpacity(settings?.surfaceOpacity),
+    // 默认 0:升级后观感与之前完全一致,需要压暗背景时由站长自己调。
+    backgroundScrim: normalizeBackgroundScrim(settings?.backgroundScrim),
+    backgroundScrimDark: normalizeBackgroundScrim(settings?.backgroundScrimDark),
     // 环境动效默认关闭；保存的预设仍会保留，方便站长关闭后再次开启。
     enableAmbientEffect: settings?.enableAmbientEffect === true,
     ambientEffect: normalizeAmbientEffect(settings?.ambientEffect),

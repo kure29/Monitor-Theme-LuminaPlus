@@ -82,6 +82,26 @@ describe("normalizeThemeSettings", () => {
     expect(settings.backgroundVideoDark).toBe(dark);
   });
 
+  it("keeps the background mask off by default and clamps each appearance", () => {
+    const defaults = normalizeThemeSettings({});
+    expect(defaults.backgroundScrim).toBe(0);
+    expect(defaults.backgroundScrimDark).toBe(0);
+
+    const masked = normalizeThemeSettings({
+      backgroundScrim: 25.4,
+      backgroundScrimDark: "60",
+    } as never);
+    expect(masked.backgroundScrim).toBe(25);
+    expect(masked.backgroundScrimDark).toBe(60);
+
+    expect(normalizeThemeSettings({ backgroundScrimDark: 999 } as never).backgroundScrimDark).toBe(
+      100,
+    );
+    expect(normalizeThemeSettings({ backgroundScrimDark: -5 } as never).backgroundScrimDark).toBe(
+      0,
+    );
+  });
+
   it("does not migrate a pipe-delimited video value", () => {
     const settings = normalizeThemeSettings({
       backgroundVideo: "/light.mp4|/dark.mp4",
