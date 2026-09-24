@@ -81,6 +81,7 @@ import {
 } from "@/utils/pingTasks";
 import {
   assignHomepagePingClients,
+  getUnassignedHomepageMultiPingClients,
   pruneHomepagePingBindings,
   removeHomepagePingClient,
   syncHomepagePingBindings,
@@ -1129,6 +1130,15 @@ export function ThemeManage() {
       sortedClients.filter((client) => draft.homepageMultiPingNodeTaskIds[client.uuid])
         .length,
     [draft.homepageMultiPingNodeTaskIds, sortedClients],
+  );
+  const unassignedMultiPingNodeCount = useMemo(
+    () => getUnassignedHomepageMultiPingClients(
+      sortedTasks,
+      sortedClients.map((client) => client.uuid),
+      draft.homepageMultiPingTaskIds,
+      draft.homepageMultiPingNodeTaskIds,
+    ).length,
+    [draft.homepageMultiPingNodeTaskIds, draft.homepageMultiPingTaskIds, sortedClients, sortedTasks],
   );
 
   const handleSyncPingBindings = () => {
@@ -2298,6 +2308,8 @@ export function ThemeManage() {
                     (_, slot) => {
                       const selectedTaskId =
                         draft.homepageMultiPingTaskIds[slot];
+                      const selectedTask = sortedTasks.find((task) => task.id === selectedTaskId);
+                      const assignedCount = selectedTask?.clients.filter((uuid) => clientsById.has(uuid)).length ?? 0;
                       return (
                         <label key={slot} className="min-w-0">
                           <span className="mb-1.5 block text-[11px] font-medium text-[var(--text-secondary)]">
@@ -2331,6 +2343,11 @@ export function ThemeManage() {
                               </option>
                             ))}
                           </select>
+                          {selectedTaskId != null && !tasksLoading && !clientsLoading && (
+                            <span className="mt-1 block text-[11px] text-[var(--text-tertiary)]">
+                              后台已分配 {assignedCount} / {sortedClients.length} 台
+                            </span>
+                          )}
                         </label>
                       );
                     },
@@ -2349,6 +2366,18 @@ export function ThemeManage() {
                     ? "请选满 3 个不同的 Ping 任务后再保存。"
                     : "未设置单独覆盖的服务器都会使用这三项任务。"}
                 </p>
+                {!draftMultiPingInvalid && unassignedMultiPingNodeCount > 0 && (
+                  <div
+                    role="status"
+                    className="mt-3 rounded-[12px] border border-[color-mix(in_srgb,var(--status-warning)_35%,var(--hairline))] bg-[color-mix(in_srgb,var(--status-warning)_9%,var(--surface))] px-3 py-2 text-[12px] leading-relaxed text-[var(--text-secondary)]"
+                  >
+                    {unassignedMultiPingNodeCount} 台服务器尚未在 monitor 后台完整分配所选线路；这些线路在首页无法显示真实延迟。请到
+                    {" "}
+                    <a href="/admin/ping" className="theme-manage-inline-link">后台 Ping 管理</a>
+                    {" "}
+                    分配任务；若该服务器已有至少三项任务，也可在下方单独配置线路。
+                  </div>
+                )}
 
                 <MultiPingNodeConfigControl
                   clients={sortedClients}

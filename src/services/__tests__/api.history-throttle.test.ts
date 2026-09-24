@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getPingRecords, getPingOverview } from "@/services/api";
+import { buildPingOverviewMap } from "@/hooks/usePingOverview";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -84,5 +85,42 @@ describe("monitor history requests", () => {
       expect.objectContaining({ id: 7, clients: ["7"] }),
     ]);
     expect(result.records).toEqual([]);
+  });
+
+  it("shows samples only for tasks actually assigned to each node in three-line mode", async () => {
+    const ts = Math.floor(Date.now() / 1000) - 60;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const isSecondNode = String(input).includes("/api/nodes/2/");
+      return new Response(JSON.stringify(isSecondNode
+        ? {
+            probes: { 1: "Line A", 2: "Line B", 4: "Line C" },
+            ping: [
+              { task_id: 1, ts, latency: 212 },
+              { task_id: 2, ts, latency: 289 },
+              { task_id: 4, ts, latency: 263 },
+            ],
+          }
+        : { probes: { 3: "Other A", 5: "Other B" }, ping: [] },
+      ), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await buildPingOverviewMap(
+      1,
+      ["1", "2"],
+      {},
+      [1, 2, 4],
+      undefined,
+      undefined,
+      getPingOverview,
+    );
+
+    expect(result.multiLines.get("1")?.map((line) => line.isAssigned)).toEqual([
+      false, false, false,
+    ]);
+    expect(result.multiLines.get("2")?.map((line) => line.lastValue)).toEqual([
+      212, 289, 263,
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

@@ -32,10 +32,9 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
   const isUnassigned = line.isAssigned === false;
   const isSimulated = line.simulated === true;
   const staleError = isError && (line.lastValue != null || line.loss != null);
-  // 未绑定的判定在公开页面来自「最近窗口内没有该探测点的样本」,后台的真实绑定关系只有
-  // 管理员接口知道,所以这里只说「无数据」,不断言后台状态。
+  // monitor 公开 Ping 历史里的 probes 包含该节点真正分配的任务。
   const latencyLabel = isUnassigned
-    ? "无数据"
+    ? "后台未分配"
     : isLoading && line.lastValue == null
       ? "加载中"
       : isError && line.lastValue == null
@@ -44,7 +43,7 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
           ? "无样本"
           : `${Math.round(line.lastValue)}ms`;
   const lossLabel = isUnassigned
-    ? "无数据"
+    ? "后台未分配"
     : isLoading && line.loss == null
       ? "加载中"
       : isError && line.loss == null
@@ -79,7 +78,7 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
       data-assigned={line.isAssigned ? "true" : "false"}
       title={
         isUnassigned
-          ? `${line.taskName} · 最近窗口内没有该探测点的样本(后台可能未绑定,或节点未上报)`
+          ? `${line.taskName} · monitor 后台未将此任务分配给该节点`
           : `${line.taskName}${isSimulated ? " · 模拟数据" : ""} · 延迟 ${latencyLabel} · 丢包 ${lossLabel}${
               staleError ? " · 刷新失败，显示上次数据" : ""
             }`
@@ -94,7 +93,7 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
         {metric === "latency" && (
           <span className="multi-ping-name-wrap">
             <span className="multi-ping-name">{line.taskName}</span>
-            {isUnassigned && <span className="multi-ping-unassigned">无数据</span>}
+            {isUnassigned && <span className="multi-ping-unassigned">未分配</span>}
             {isSimulated && <SimulatedPingBadge />}
           </span>
         )}

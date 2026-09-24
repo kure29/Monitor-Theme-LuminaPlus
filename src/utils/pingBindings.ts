@@ -1,6 +1,8 @@
 import {
   invertHomepagePingTaskBindings,
   normalizeHomepagePingTaskBindings,
+  resolveHomepageMultiPingTaskIds,
+  type HomepageMultiPingNodeTaskIds,
   type HomepagePingTaskBindings,
 } from "@/utils/pingTasks";
 
@@ -72,4 +74,21 @@ export function syncHomepagePingBindings(
     (next[String(taskId)] ??= []).push(uuid);
   }
   return pruneHomepagePingBindings(next);
+}
+
+/** 找出所选多线路任务未全部分配到的节点，供设置页在保存前提示。 */
+export function getUnassignedHomepageMultiPingClients(
+  tasks: AssignedTask[],
+  clientUuids: string[],
+  globalTaskIds: number[],
+  nodeTaskIds: HomepageMultiPingNodeTaskIds,
+): string[] {
+  const assignedByTask = new Map(
+    tasks.map((task) => [task.id, new Set(task.clients)]),
+  );
+  return clientUuids.filter((uuid) =>
+    resolveHomepageMultiPingTaskIds(uuid, globalTaskIds, nodeTaskIds).some(
+      (taskId) => !assignedByTask.get(taskId)?.has(uuid),
+    ),
+  );
 }

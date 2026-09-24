@@ -142,7 +142,11 @@ export function MultiPingNodeConfigPanel({
   const selectedInvalidTaskIds = selectedClient
     ? (invalidTaskIdsByClient.get(selectedClient.uuid) ?? EMPTY_TASK_IDS)
     : EMPTY_TASK_IDS;
-  const canEnableOverride = tasks.length >= HOMEPAGE_MULTI_PING_TASK_COUNT;
+  const availableTaskIds = selectedClient
+    ? tasks.filter((task) => taskSupportsClient(task.id, selectedClient.uuid, taskClientsById)).map((task) => task.id)
+    : EMPTY_TASK_IDS;
+  const selectableTaskIds = fakePingForUnbound ? tasks.map((task) => task.id) : availableTaskIds;
+  const canEnableOverride = selectableTaskIds.length >= HOMEPAGE_MULTI_PING_TASK_COUNT;
   const nodeWindowStart = Math.max(
     0,
     Math.min(
@@ -195,7 +199,7 @@ export function MultiPingNodeConfigPanel({
     const nextTaskIds = createHomepageMultiPingTaskOverride(
       selectedTaskIds,
       globalTaskIds,
-      tasks.map((task) => task.id),
+      selectableTaskIds,
     );
     if (!nextTaskIds) return;
     onChange({
@@ -213,6 +217,7 @@ export function MultiPingNodeConfigPanel({
     if (!selectedClient || !selectedTaskIds || rawValue === "") return;
     const nextTaskIds = [...selectedTaskIds];
     const nextTaskId = Number(rawValue);
+    if (!selectableTaskIds.includes(nextTaskId)) return;
     const previousTaskId = nextTaskIds[slot];
     const occupiedSlot = nextTaskIds.indexOf(nextTaskId);
     nextTaskIds[slot] = nextTaskId;
@@ -247,8 +252,8 @@ export function MultiPingNodeConfigPanel({
               已单独配置 {customCount} / {clients.length} 台，其余继承全局默认
               {invalidClientCount > 0
                 ? fakePingForUnbound
-                  ? `，${invalidClientCount} 台含未绑定探测点并将显示模拟数据。`
-                  : `，${invalidClientCount} 台含未绑定探测点。`
+                  ? `，${invalidClientCount} 台含后台未分配的探测点并将显示模拟数据。`
+                  : `，${invalidClientCount} 台含后台未分配的探测点。`
                 : "。"}
             </p>
           </div>
@@ -370,12 +375,12 @@ export function MultiPingNodeConfigPanel({
                           className="multi-ping-config-status is-warning"
                           title={
                             fakePingForUnbound
-                              ? `${invalidIds.map((taskId) => taskLabel(taskId, tasksById)).join("、")} 未在后台绑定此服务器，将显示模拟数据`
-                              : `${invalidIds.map((taskId) => taskLabel(taskId, tasksById)).join("、")} 未在后台绑定此服务器`
+                              ? `${invalidIds.map((taskId) => taskLabel(taskId, tasksById)).join("、")} 未在后台分配给此服务器，将显示模拟数据`
+                              : `${invalidIds.map((taskId) => taskLabel(taskId, tasksById)).join("、")} 未在后台分配给此服务器`
                           }
                         >
                           <AlertTriangle size={12} />
-                          {fakePingForUnbound ? "将模拟" : "未绑定"}
+                          {fakePingForUnbound ? "将模拟" : "未分配"}
                         </span>
                       ) : override ? (
                         <span className="multi-ping-config-status" title="已单独配置">
@@ -460,7 +465,7 @@ export function MultiPingNodeConfigPanel({
                         title={
                           canEnableOverride
                             ? "为当前服务器单独选择探测点"
-                            : "当前可用的 Ping 任务不足 3 个"
+                            : `monitor 后台只给这台服务器分配了 ${availableTaskIds.length} 项任务；单独配置需要 3 项`
                         }
                       >
                         单独配置
@@ -473,15 +478,17 @@ export function MultiPingNodeConfigPanel({
                       <AlertTriangle size={16} />
                       <div>
                         <strong>
-                          后台未绑定探测点
+                          后台未分配探测点
                         </strong>
                         <span>
                           {selectedInvalidTaskIds
                             .map((taskId) => taskLabel(taskId, tasksById))
-                            .join("、")} 未在 monitor 后台绑定到此服务器。
+                            .join("、")} 未在 monitor 后台分配给此服务器。
                           {fakePingForUnbound
                             ? "模拟数据功能已开启，以上线路会显示模拟数据；模拟数据不代表真实网络质量。"
-                            : "模拟数据功能未开启，以上线路不会生成延迟；仍可改用单独配置并在下方更换探测点。"}
+                            : canEnableOverride
+                              ? "模拟数据功能未开启，以上线路不会生成延迟；可改用单独配置，选择后台已分配的探测点。"
+                              : "模拟数据功能未开启，以上线路不会生成延迟；请先在 monitor 后台为此服务器分配至少三项任务。"}
                         </span>
                       </div>
                     </div>
@@ -528,13 +535,18 @@ export function MultiPingNodeConfigPanel({
                                     <option
                                       key={task.id}
                                       value={task.id}
+                                      disabled={!fakePingForUnbound && !taskSupportsClient(
+                                        task.id,
+                                        selectedClient.uuid,
+                                        taskClientsById,
+                                      )}
                                     >
                                       {task.name || `任务 #${task.id}`}
                                       {!taskSupportsClient(
                                         task.id,
                                         selectedClient.uuid,
                                         taskClientsById,
-                                      ) && "（后台未绑定）"}
+                                      ) && "（后台未分配）"}
                                     </option>
                                   ))}
                                 </select>
@@ -546,7 +558,7 @@ export function MultiPingNodeConfigPanel({
                                       : "尚未设置全局默认"}
                                   </span>
                                   {selectedTaskId != null && !selectedTaskSupported && (
-                                    <span className="multi-ping-config-inline-warning">未绑定</span>
+                                    <span className="multi-ping-config-inline-warning">未分配</span>
                                   )}
                                 </span>
                               )}
