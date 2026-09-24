@@ -76,10 +76,15 @@ import {
   HOMEPAGE_MULTI_PING_TASK_COUNT,
   normalizeHomepageMultiPingNodeTaskIds,
   normalizeHomepageMultiPingTaskIds,
-  normalizeHomepagePingTaskBindings,
   type HomepageMultiPingNodeTaskIds,
   type HomepagePingTaskBindings,
 } from "@/utils/pingTasks";
+import {
+  assignHomepagePingClients,
+  pruneHomepagePingBindings,
+  removeHomepagePingClient,
+  syncHomepagePingBindings,
+} from "@/utils/pingBindings";
 import {
   DEFAULT_THEME_SETTINGS,
   normalizeHomeHeaderVisibleSeconds,
@@ -207,85 +212,6 @@ function summarizeNodes(
   const names = uuids.map((uuid) => clientsById.get(uuid)?.name || uuid);
   const summary = names.join("、");
   return summary.length > 92 ? `${summary.slice(0, 92)}...` : summary;
-}
-
-function pruneBindings(bindings: HomepagePingTaskBindings) {
-  const normalized = normalizeHomepagePingTaskBindings(bindings);
-  const pruned: HomepagePingTaskBindings = {};
-
-  for (const [taskId, clients] of Object.entries(normalized)) {
-    if (clients.length > 0) {
-      pruned[taskId] = clients;
-    }
-  }
-
-  return pruned;
-}
-
-function applyClientAssignment(
-  bindings: HomepagePingTaskBindings,
-  taskId: number,
-  clientUuid: string,
-  checked: boolean,
-) {
-  const taskKey = String(taskId);
-  const next = pruneBindings(bindings);
-
-  for (const [currentTaskId, clients] of Object.entries(next)) {
-    const filtered = clients.filter((uuid) => uuid !== clientUuid);
-    if (filtered.length > 0) {
-      next[currentTaskId] = filtered;
-    } else {
-      delete next[currentTaskId];
-    }
-  }
-
-  if (checked) {
-    const selected = next[taskKey] ?? [];
-    next[taskKey] = Array.from(new Set([...selected, clientUuid])).sort((left, right) =>
-      left.localeCompare(right),
-    );
-  }
-
-  return next;
-}
-
-// 反查:client uuid → 所属 task id(字符串 key)。UI 保证每个 client 最多归属一个
-// task,所以简单的后写覆盖 map 就是精确的。下面的「全选可用」reducer 和每次渲染的
-// 可选节点过滤共用它,把「某 client 归属哪个 task」的推导收在一处。
-function invertBindings(bindings: HomepagePingTaskBindings): Map<string, string> {
-  const assignedTaskByClient = new Map<string, string>();
-  for (const [taskId, clients] of Object.entries(bindings)) {
-    for (const clientUuid of clients) {
-      assignedTaskByClient.set(clientUuid, taskId);
-    }
-  }
-  return assignedTaskByClient;
-}
-
-function applyAvailableClientAssignments(
-  bindings: HomepagePingTaskBindings,
-  taskId: number,
-  clientUuids: string[],
-) {
-  const taskKey = String(taskId);
-  const next = pruneBindings(bindings);
-  const assignedTaskByClient = invertBindings(next);
-  const selected = new Set(next[taskKey] ?? []);
-
-  for (const clientUuid of clientUuids) {
-    const assignedTaskId = assignedTaskByClient.get(clientUuid);
-    if (assignedTaskId && assignedTaskId !== taskKey) continue;
-    selected.add(clientUuid);
-  }
-
-  if (selected.size > 0) {
-    next[taskKey] = [...selected].sort((left, right) => left.localeCompare(right));
-  } else {
-    delete next[taskKey];
-  }
-
-  return next;
 }
 
 // 本页托管设置的键清单唯一来源:草稿类型(ThemeDraft)、seed(draftFromSettings)与内容签名
@@ -441,7 +367,6 @@ const TaskBindingSection = memo(function TaskBindingSection({
   expanded,
   clientsById,
   visibleClients,
-  assignedTaskByClientUuid,
   nodeSearch,
   onNodeSearch,
   onToggleExpand,
@@ -452,7 +377,6 @@ const TaskBindingSection = memo(function TaskBindingSection({
   expanded: boolean;
   clientsById: Map<string, AdminClient>;
   visibleClients: AdminClient[];
-  assignedTaskByClientUuid: Map<string, string>;
   nodeSearch: string;
   onNodeSearch: (value: string) => void;
   onToggleExpand: (taskId: number) => void;
@@ -461,16 +385,14 @@ const TaskBindingSection = memo(function TaskBindingSection({
   ) => void;
 }) {
   const assignedSummary = summarizeNodes(assigned, clientsById);
-  // 过滤只有展开的任务需要;收起的卡片跳过,搜索输入不再对每个任务做 O(clients) 扫描。
+  const selectedClients = useMemo(() => new Set(assigned), [assigned]);
+  const backendClients = useMemo(() => new Set(task.clients), [task.clients]);
   const selectableVisibleClients = expanded
-    ? visibleClients.filter((client) => {
-        const assignedTaskId = assignedTaskByClientUuid.get(client.uuid);
-        return !assignedTaskId || assignedTaskId === String(task.id);
-      })
+    ? visibleClients.filter((client) => backendClients.has(client.uuid))
     : EMPTY_ADMIN_CLIENTS;
   const allVisibleSelectableAssigned =
     selectableVisibleClients.length > 0 &&
-    selectableVisibleClients.every((client) => assigned.includes(client.uuid));
+    selectableVisibleClients.every((client) => selectedClients.has(client.uuid));
   return (
     <section className="surface-inset px-4 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -491,7 +413,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
           </div>
           <div className="mt-2 text-[12px] text-[var(--text-secondary)]">
             <span className="font-medium text-[var(--text-primary)]">
-              已绑定 {assigned.length} 个节点
+              首页选择 {assigned.length} 台 · 后台分配 {task.clients.length} 台
             </span>
             <span className="mx-2 text-[var(--text-tertiary)]">·</span>
             <span title={task.target || ""}>{task.target || "未填写目标"}</span>
@@ -508,7 +430,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
               disabled={selectableVisibleClients.length === 0 || allVisibleSelectableAssigned}
               onClick={() => {
                 onPatchBindings((prev) =>
-                  applyAvailableClientAssignments(
+                  assignHomepagePingClients(
                     prev,
                     task.id,
                     selectableVisibleClients.map((client) => client.uuid),
@@ -527,7 +449,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
                 onPatchBindings((prev) => {
                   const next = { ...prev };
                   delete next[String(task.id)];
-                  return pruneBindings(next);
+                  return pruneHomepagePingBindings(next);
                 });
               }}
               className="theme-manage-button is-compact is-danger"
@@ -548,6 +470,9 @@ const TaskBindingSection = memo(function TaskBindingSection({
 
       {expanded && (
         <div className="mt-4 border-t border-[var(--hairline)] pt-4">
+          <p className="mb-3 text-[11px] text-[var(--text-tertiary)]">
+            仅选择后台已分配给此任务的节点；全选只作用于当前搜索结果，已选其他首页任务的节点会移到这里。
+          </p>
           <label className="surface-inset flex items-center gap-2 px-3 py-2">
             <Search size={14} className="text-[var(--text-tertiary)]" />
             <input
@@ -561,13 +486,15 @@ const TaskBindingSection = memo(function TaskBindingSection({
 
           <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {visibleClients.map((client) => {
-              const checked = assigned.includes(client.uuid);
+              const checked = selectedClients.has(client.uuid);
+              const backendAssigned = backendClients.has(client.uuid);
               const subtitle = [client.group, client.uuid].filter(Boolean).join(" · ");
               return (
                 <label
                   key={client.uuid}
                   className={clsx(
-                    "flex cursor-pointer items-start gap-3 rounded-[12px] border px-3 py-3 transition-colors",
+                    "flex items-start gap-3 rounded-[12px] border px-3 py-3 transition-colors",
+                    !backendAssigned && !checked ? "cursor-not-allowed opacity-60" : "cursor-pointer",
                     checked
                       ? "border-[var(--border-strong)] bg-[color-mix(in_srgb,var(--hover-bg)_72%,transparent)]"
                       : "border-[var(--hairline)] bg-transparent hover:bg-[var(--hover-bg)]",
@@ -576,10 +503,13 @@ const TaskBindingSection = memo(function TaskBindingSection({
                   <input
                     type="checkbox"
                     checked={checked}
+                    disabled={!backendAssigned && !checked}
                     onChange={(event) => {
                       const nextChecked = event.target.checked;
                       onPatchBindings((prev) =>
-                        applyClientAssignment(prev, task.id, client.uuid, nextChecked),
+                        nextChecked
+                          ? assignHomepagePingClients(prev, task.id, [client.uuid])
+                          : removeHomepagePingClient(prev, task.id, client.uuid),
                       );
                     }}
                     className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent-500)]"
@@ -593,6 +523,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
                     </div>
                     <div className="mt-1 text-[11px] text-[var(--text-tertiary)]">
                       {subtitle || client.region || "未设置分组"}
+                      {!backendAssigned && " · 后台未分配此任务"}
                     </div>
                   </div>
                 </label>
@@ -888,6 +819,8 @@ export function ThemeManage() {
     queryKey: ["admin", "ping-tasks"],
     queryFn: ({ signal }) => getAdminPingTasks({ signal }),
     staleTime: 30_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
     retry: false,
   });
   const {
@@ -898,6 +831,8 @@ export function ThemeManage() {
     queryKey: ["admin", "clients"],
     queryFn: ({ signal }) => getAdminClients({ signal }),
     staleTime: 30_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
     retry: false,
   });
   const sourceThemeSettings = useMemo(
@@ -1118,7 +1053,7 @@ export function ThemeManage() {
     } = draft;
     return {
       ...rest,
-      homepagePingBindings: pruneBindings(rest.homepagePingBindings),
+      homepagePingBindings: pruneHomepagePingBindings(rest.homepagePingBindings),
       homepageMultiPingNodeTaskIds: normalizeHomepageMultiPingNodeTaskIds(
         rest.homepageMultiPingNodeTaskIds,
       ),
@@ -1196,13 +1131,17 @@ export function ThemeManage() {
     [draft.homepageMultiPingNodeTaskIds, sortedClients],
   );
 
-  // 每个 client 归属哪个 task 的反查,只在绑定草稿变化时重建。与「全选可用」reducer
-  // 共用 invertBindings() 避免推导漂移,并把可选节点过滤保持在 O(tasks × clients),
-  // 而不是每个 client 都重扫一遍 bindings。
-  const assignedTaskByClientUuid = useMemo(
-    () => invertBindings(draft.homepagePingBindings),
-    [draft.homepagePingBindings],
-  );
+  const handleSyncPingBindings = () => {
+    editVersionRef.current += 1;
+    setDraft((prev) => ({
+      ...prev,
+      homepagePingBindings: syncHomepagePingBindings(
+        prev.homepagePingBindings,
+        sortedTasks,
+        sortedClients.map((client) => client.uuid),
+      ),
+    }));
+  };
 
   const handleSave = async (): Promise<boolean> => {
     if (
@@ -2289,8 +2228,8 @@ export function ThemeManage() {
           <>
             单线路模式为每个节点绑定一项 Ping 任务；开启三网模式后，大卡片和小卡片默认展示三项全局任务，也可以为每台服务器单独覆盖探测点。迷你卡片与列表仍显示节点的单线路绑定。
             {" "}
-            monitor 后台把任务绑定到节点后，还要在这里完成首页绑定，卡片才会显示该探测点的数据——
-            主题以这里的绑定为准，后台的绑定关系只决定谁会真的去测量。
+            monitor 后台把任务分配给节点后，点击下方「同步后台分配」即可为首页补齐单线路选择；
+            也可以逐项选择已分配的节点。后台分配决定谁会探测，首页选择决定卡片显示哪条线路。
             {" "}
             如果当前还没有可用任务，请先前往
             {" "}
@@ -2455,6 +2394,19 @@ export function ThemeManage() {
             </div>
           </div>
 
+          {!tasksLoading && !clientsLoading && sortedTasks.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-tertiary)]">
+              <span>同步后台分配可补齐仅有一项任务的节点；已有且仍有效的线路会保留，多任务节点请手动选择。</span>
+              <button
+                type="button"
+                onClick={handleSyncPingBindings}
+                className="theme-manage-button is-compact"
+              >
+                同步后台分配
+              </button>
+            </div>
+          )}
+
           {draft.enableHomepageMultiPing && (
             <div className="text-[11px] text-[var(--text-tertiary)]">
               下方单线路绑定继续用于迷你卡片和列表；大卡片与小卡片使用上方三项任务。
@@ -2506,7 +2458,6 @@ export function ThemeManage() {
                   clientsById={clientsById}
                   // 收起的卡片收到稳定空值:节点搜索的每次击键只重渲展开的那一张。
                   visibleClients={expanded ? visibleClients : EMPTY_ADMIN_CLIENTS}
-                  assignedTaskByClientUuid={assignedTaskByClientUuid}
                   nodeSearch={expanded ? nodeSearch : ""}
                   onNodeSearch={setNodeSearch}
                   onToggleExpand={toggleTaskExpanded}

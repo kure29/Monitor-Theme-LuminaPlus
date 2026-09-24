@@ -6,7 +6,6 @@ import { useHiddenNodeUuids } from "@/hooks/useVisibleNodes";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import {
   getPingOverview,
-  getPingOverviewStats,
   prewarmPingOverviewDependencies,
 } from "@/services/api";
 import type {
@@ -362,7 +361,11 @@ export async function buildPingOverviewMap(
   signal?: AbortSignal,
   previous?: PreviousPingOverview,
   loadOverview: typeof getPingOverview = getPingOverview,
-  loadStats?: typeof getPingOverviewStats,
+  loadStats?: (
+    hours: number,
+    taskIds: number[],
+    options?: { signal?: AbortSignal; entityIds?: string[] },
+  ) => Promise<PingTaskStats[]>,
   onProgress?: (result: PingOverviewMapResult) => void,
   nodeMultiTaskIds: HomepageMultiPingNodeTaskIds = {},
 ): Promise<PingOverviewMapResult> {
@@ -619,8 +622,7 @@ export async function buildPingOverviewMap(
     for (const loaded of loadedByTask.values()) applyOverview(loaded);
   };
 
-  const batchStatsLoader =
-    loadStats ?? (loadOverview === getPingOverview ? getPingOverviewStats : null);
+  const batchStatsLoader = loadStats;
   const batchStatsRequest = batchStatsLoader
     ? withTimeoutSignal(
         (requestSignal) =>

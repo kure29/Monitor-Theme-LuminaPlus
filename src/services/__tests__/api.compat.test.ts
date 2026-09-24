@@ -38,6 +38,19 @@ describe("monitor Ping history adapter", () => {
     expect(result.windowLoss).toEqual({ 2: 0.56 });
     expect(result.tasks[0]).toMatchObject({ id: 2, loss: 0.56 });
   });
+
+  it("retains a backend-assigned probe before its first sample arrives", () => {
+    const result = normalizePingHistory("9", 1, {
+      probes: { "2": "Cloudflare", "3": "Backup" },
+      ping: [{ task_id: 2, ts: 1_700_000_000, latency: 24 }],
+    });
+
+    expect(result.tasks).toEqual([
+      expect.objectContaining({ id: 2, clients: ["9"] }),
+      expect.objectContaining({ id: 3, name: "Backup", clients: ["9"] }),
+    ]);
+    expect(result.records).toHaveLength(1);
+  });
 });
 
 describe("monitor resource history adapter", () => {

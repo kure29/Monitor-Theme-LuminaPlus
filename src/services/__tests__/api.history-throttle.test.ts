@@ -61,4 +61,28 @@ describe("monitor history requests", () => {
     expect(pingRequests).toHaveLength(1);
     expect(result.tasks.map((task) => task.id)).toEqual([7]);
   });
+
+  it("does not report a node as unassigned when its history request failed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
+      new Response(String(input).includes("/api/nodes/8/") ? "unavailable" : payload, {
+        status: String(input).includes("/api/nodes/8/") ? 500 : 200,
+      }),
+    ));
+
+    await expect(getPingOverview(1, 7, { entityIds: ["7", "8"] })).rejects.toThrow();
+  });
+
+  it("keeps an assigned task with no history samples in the homepage overview", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      probes: { 7: "Cloudflare" },
+      ping: [],
+    }), { status: 200 })));
+
+    const result = await getPingOverview(1, 7, { entityIds: ["7"] });
+    expect(result.taskAssignmentsKnown).toBe(true);
+    expect(result.tasks).toEqual([
+      expect.objectContaining({ id: 7, clients: ["7"] }),
+    ]);
+    expect(result.records).toEqual([]);
+  });
 });

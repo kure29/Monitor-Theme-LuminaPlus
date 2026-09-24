@@ -624,7 +624,14 @@ export function normalizePingHistory(uuid: string, hours: number, payload: Monit
       windowLoss[parsedTaskId] = Math.min(100, Math.max(0, value));
     }
   }
-  const ids = new Set(records.map((record) => record.task_id));
+  // probes 包含已分配但暂时没有样本的任务。只根据记录建 task 会把刚分配、
+  // 离线或探测尚未上报的节点错判为「后台未绑定」。
+  const ids = new Set([
+    ...records.map((record) => record.task_id),
+    ...Object.keys(payload.probes ?? {})
+      .map(Number)
+      .filter((id) => Number.isSafeInteger(id) && id > 0),
+  ]);
   const interval = inferIntervalSeconds((payload.ping ?? []).map((point) => point.ts));
   const tasks = [...ids]
     .sort((left, right) => left - right)
@@ -698,17 +705,6 @@ export function prewarmPingOverviewDependencies() {
   ensureLiveSocket();
 }
 
-export async function getPingOverviewStats(
-  hours: number,
-  taskIds: number[],
-  options?: ApiCallOptions & { entityIds?: string[] },
-): Promise<PingTaskStats[]> {
-  void hours;
-  void taskIds;
-  void options;
-  return [];
-}
-
 export async function getPingOverview(
   hours = 1,
   taskId?: number,
@@ -720,6 +716,8 @@ export async function getPingOverview(
   const responses = await mapBatches(entityIds, 4, (uuid) =>
     getPingRecords(uuid, hours, { signal: options?.signal }),
   );
+  const failed = responses.find((result) => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
   const records: PingRecord[] = [];
   const tasks = new Map<number, PingTask>();
   const clientWindowLoss: Record<string, Record<number, number>> = {};
