@@ -179,7 +179,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
     <div
       className={clsx("multi-ping-status", `is-${density}`, className)}
       role="group"
-      aria-label="三网延迟与丢包"
+      aria-label="多线路延迟与丢包"
     >
       <div className="multi-ping-columns">
         <MultiPingMetricColumn

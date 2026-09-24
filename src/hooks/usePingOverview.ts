@@ -19,12 +19,11 @@ import type {
 import { withTimeoutSignal } from "@/utils/abort";
 import { resolvePingSampleCounts } from "@/utils/pingMetrics";
 import {
-  HOMEPAGE_MULTI_PING_TASK_COUNT,
+  invertHomepagePingTaskBindings,
   resolveHomepagePingSelections,
   type HomepageMultiPingNodeTaskIds,
   type HomepagePingTaskBindings,
 } from "@/utils/pingTasks";
-import type { NodeViewMode } from "@/utils/themeSettings";
 
 const DEFAULT_PING_REFRESH_INTERVAL = 60_000;
 const MIN_PING_REFRESH_INTERVAL = 10_000;
@@ -44,24 +43,6 @@ const EMPTY_PING: PingOverviewItem = {
 };
 const EMPTY_PING_LINES: HomepagePingLine[] = [];
 const EMPTY_PING_BUCKETS: PingOverviewBucket[] = [];
-const EMPTY_TASK_IDS: number[] = [];
-const EMPTY_NODE_MULTI_TASK_IDS: HomepageMultiPingNodeTaskIds = {};
-
-type HomepagePingRequestMode = "single" | "multi";
-
-export function resolveHomepagePingRequestMode(
-  viewMode: NodeViewMode,
-  multiPingEnabled: boolean,
-  multiTaskIds: number[],
-  nodeMultiTaskIds: HomepageMultiPingNodeTaskIds = {},
-): HomepagePingRequestMode {
-  return (viewMode === "large" || viewMode === "compact") &&
-    multiPingEnabled &&
-    (multiTaskIds.length === HOMEPAGE_MULTI_PING_TASK_COUNT ||
-      Object.keys(nodeMultiTaskIds).length > 0)
-    ? "multi"
-    : "single";
-}
 
 export interface PingOverviewMapResult {
   assignmentKey: string;
@@ -71,6 +52,8 @@ export interface PingOverviewMapResult {
   successfulTaskIds: number[];
   failedTaskIds: number[];
   pendingTaskIds: number[];
+  /** 后台自动模式在没有任何任务时也属于成功读取。 */
+  successfulRequest?: boolean;
   /** 进度提交时仅包含本次被任务状态/数据更新影响的节点。 */
   changedUuids?: string[];
 }
@@ -251,31 +234,17 @@ function buildAssignmentKey(selectedTaskIdsByClient: Map<string, number[]>) {
     .join("|");
 }
 
-function resolvePingAssignmentKey(
-  clientUuids: string[],
-  bindings: HomepagePingTaskBindings,
-  multiTaskIds: number[],
-  nodeMultiTaskIds: HomepageMultiPingNodeTaskIds = {},
-) {
+function resolvePingAssignmentKey(clientUuids: string[], bindings: HomepagePingTaskBindings) {
   const normalizedUuids = normalizeVisibleUuids(clientUuids);
-  const {
-    singleTaskIdsByClient,
-    multiTaskIdsByClient,
-    requestedTaskIdsByClient,
-  } = resolveHomepagePingSelections(
-    normalizedUuids,
-    bindings,
-    multiTaskIds,
-    nodeMultiTaskIds,
+  if (normalizedUuids.length === 0) return "";
+  const preferred = invertHomepagePingTaskBindings(bindings);
+  const singlePreferences = new Map(
+    normalizedUuids.flatMap((uuid) => {
+      const taskId = preferred.get(uuid);
+      return taskId == null ? [] : [[uuid, [taskId]] as [string, number[]]];
+    }),
   );
-  const selectedTaskIds = new Set(
-    Array.from(requestedTaskIdsByClient.values()).flat(),
-  );
-  if (selectedTaskIds.size === 0) return "";
-  return [
-    `single:${buildAssignmentKey(singleTaskIdsByClient)}`,
-    `multi:${buildAssignmentKey(multiTaskIdsByClient)}`,
-  ].join("|");
+  return `backend:${normalizedUuids.join("|")}|preferred:${buildAssignmentKey(singlePreferences)}`;
 }
 
 // 限制首页多节点历史请求的整条调用链，避免一次刷新长期占住轮询。
@@ -685,6 +654,91 @@ export async function buildPingOverviewMap(
   return buildResult();
 }
 
+/** 与详情页读取同一份节点 Ping 历史，并以 probes 的后台分配关系生成首页线路。 */
+export async function buildBackendPingOverviewMap(
+  hours: number,
+  clientUuids: string[],
+  bindings: HomepagePingTaskBindings,
+  signal?: AbortSignal,
+  loadOverview: typeof getPingOverview = getPingOverview,
+): Promise<PingOverviewMapResult> {
+  const uuids = normalizeVisibleUuids(clientUuids);
+  const preferredSingleTaskByClient = invertHomepagePingTaskBindings(bindings);
+  const assignmentKey = resolvePingAssignmentKey(uuids, bindings);
+  if (uuids.length === 0) {
+    return {
+      assignmentKey,
+      intervalMs: DEFAULT_PING_REFRESH_INTERVAL,
+      singleItems: new Map(),
+      multiLines: new Map(),
+      successfulTaskIds: [],
+      failedTaskIds: [],
+      pendingTaskIds: [],
+      successfulRequest: true,
+    };
+  }
+
+  const overview = await withTimeoutSignal(
+    (requestSignal) => loadOverview(hours, undefined, {
+      signal: requestSignal,
+      entityIds: uuids,
+    }),
+    PING_REQUEST_TIMEOUT_MS,
+    signal,
+  );
+  const itemsByTask = new Map<number, Map<string, PingOverviewItem>>();
+  for (const task of overview.tasks) {
+    const windowLoss = new Map<string, number>();
+    for (const uuid of uuids) {
+      const loss = overview.clientWindowLoss?.[uuid]?.[task.id];
+      if (typeof loss === "number" && Number.isFinite(loss)) windowLoss.set(uuid, loss);
+    }
+    itemsByTask.set(
+      task.id,
+      buildPingOverviewItems(task.id, overview.records, overview.stats, overview.intervalSeconds, windowLoss),
+    );
+  }
+
+  const singleItems = new Map<string, PingOverviewItem>();
+  const multiLines = new Map<string, HomepagePingLine[]>();
+  for (const uuid of uuids) {
+    const assignedTasks = overview.tasks
+      .filter((task) => task.clients.includes(uuid))
+      .sort((left, right) => left.id - right.id);
+    const lines = assignedTasks.map((task) => ({
+      taskId: task.id,
+      taskName: task.name || `任务 #${task.id}`,
+      ...(itemsByTask.get(task.id)?.get(uuid) ?? assignedEmptyPing(uuid, "ready")),
+      loadState: "ready" as const,
+    }));
+    multiLines.set(uuid, lines);
+    const preferredTaskId = preferredSingleTaskByClient.get(uuid);
+    const singleLine = lines.find((line) => line.taskId === preferredTaskId) ?? lines[0];
+    singleItems.set(uuid, singleLine ?? {
+      client: uuid,
+      isAssigned: false,
+      loadState: "ready",
+      lastValue: null,
+      samples: [],
+      max: 1,
+      loss: null,
+    });
+  }
+
+  const intervals = overview.tasks.map((task) => task.interval).filter((value) => value > 0);
+  const intervalSeconds = overview.intervalSeconds ?? (intervals.length > 0 ? Math.min(...intervals) : undefined);
+  return {
+    assignmentKey,
+    intervalMs: normalizeRefreshInterval(intervalSeconds),
+    singleItems,
+    multiLines,
+    successfulTaskIds: overview.tasks.map((task) => task.id),
+    failedTaskIds: [],
+    pendingTaskIds: [],
+    successfulRequest: true,
+  };
+}
+
 interface PingOverviewStoreState {
   assignmentKey: string;
   intervalMs: number;
@@ -702,8 +756,6 @@ let pingOverviewStatus: PingOverviewStatusSnapshot = EMPTY_PING_STATUS;
 let scheduledVisibleUuids: string[] = [];
 let scheduledVisibleKey = "";
 let scheduledBindings: HomepagePingTaskBindings = {};
-let scheduledMultiTaskIds: number[] = [];
-let scheduledNodeMultiTaskIds: HomepageMultiPingNodeTaskIds = {};
 let scheduledSelectionKey = "";
 let pingRefreshInFlight = false;
 let pingRefreshTimer: number | null = null;
@@ -865,7 +917,7 @@ export function selectPersistablePingOverview(
   result: PingOverviewMapResult,
 ): PersistablePingOverviewData | null {
   // 全部失败时保留旧缓存，避免把空占位写成“成功”并刷新旧数据的寿命。
-  if (!result.assignmentKey || result.successfulTaskIds.length === 0) {
+  if (!result.assignmentKey || (!result.successfulRequest && result.successfulTaskIds.length === 0)) {
     return null;
   }
 
@@ -1082,34 +1134,16 @@ async function refreshPingOverview() {
       return;
     }
 
-    const next = await buildPingOverviewMap(
+    const next = await buildBackendPingOverviewMap(
       1,
       scheduledVisibleUuids,
       scheduledBindings,
-      scheduledMultiTaskIds,
       signal,
-      pingOverviewState,
       getPingOverview,
-      undefined,
-      (progress) => {
-        if (!isCurrent()) return;
-        commitPingOverview(
-          progress.assignmentKey,
-          progress.intervalMs,
-          progress.singleItems,
-          progress.multiLines,
-          {
-            status: hasCachedOverview ? "ready" : "loading",
-            isRefreshing: true,
-            changedUuids: progress.changedUuids,
-          },
-        );
-      },
-      scheduledNodeMultiTaskIds,
     );
     if (isCurrent()) {
       const hasRequestedTasks = next.assignmentKey.length > 0;
-      const nextStatus: PingOverviewLoadState = !hasRequestedTasks
+      const nextStatus: PingOverviewLoadState = next.successfulRequest || !hasRequestedTasks
         ? "ready"
         : next.successfulTaskIds.length > 0
           ? "ready"
@@ -1126,7 +1160,7 @@ async function refreshPingOverview() {
       );
       persistPingOverviewCache(next);
       schedulePingRefresh(
-        next.successfulTaskIds.length > 0
+        next.successfulRequest || next.successfulTaskIds.length > 0
           ? next.intervalMs
           : DEFAULT_PING_REFRESH_INTERVAL,
       );
@@ -1159,17 +1193,10 @@ async function refreshPingOverview() {
 function ensurePingOverviewStarted(
   visibleUuids: string[],
   bindings: HomepagePingTaskBindings,
-  multiTaskIds: number[],
-  nodeMultiTaskIds: HomepageMultiPingNodeTaskIds,
 ) {
   const normalizedVisibleUuids = normalizeVisibleUuids(visibleUuids);
   const visibleKey = normalizedVisibleUuids.join("|");
-  const selectionKey = resolvePingAssignmentKey(
-    normalizedVisibleUuids,
-    bindings,
-    multiTaskIds,
-    nodeMultiTaskIds,
-  );
+  const selectionKey = resolvePingAssignmentKey(normalizedVisibleUuids, bindings);
 
   if (
     scheduledVisibleKey !== visibleKey ||
@@ -1178,8 +1205,6 @@ function ensurePingOverviewStarted(
     scheduledVisibleUuids = normalizedVisibleUuids;
     scheduledVisibleKey = visibleKey;
     scheduledBindings = bindings;
-    scheduledMultiTaskIds = multiTaskIds;
-    scheduledNodeMultiTaskIds = nodeMultiTaskIds;
     scheduledSelectionKey = selectionKey;
 
     pingAbortController?.abort();
@@ -1188,12 +1213,7 @@ function ensurePingOverviewStarted(
       window.clearTimeout(pingRefreshTimer);
       pingRefreshTimer = null;
     }
-    const assignmentKey = resolvePingAssignmentKey(
-      normalizedVisibleUuids,
-      bindings,
-      multiTaskIds,
-      nodeMultiTaskIds,
-    );
+    const assignmentKey = selectionKey;
     const cached = readPingOverviewCache(assignmentKey);
     commitPingOverview(
       assignmentKey,
@@ -1244,7 +1264,7 @@ function getPingLinesSnapshot(uuid: string) {
   return pingOverviewState.multiLines.get(uuid) ?? EMPTY_PING_LINES;
 }
 
-export function useHomepagePingOverview(viewMode: NodeViewMode) {
+export function useHomepagePingOverview() {
   const { data: me } = useAuth();
   const visibleUuids = useVisibleNodeUuids(me?.logged_in === true);
   const themeSettings = useThemeSettings();
@@ -1259,28 +1279,8 @@ export function useHomepagePingOverview(viewMode: NodeViewMode) {
         : visibleUuids,
     [visibleUuids, hiddenUuids],
   );
-  const requestMode = resolveHomepagePingRequestMode(
-    viewMode,
-    themeSettings.enableHomepageMultiPing,
-    themeSettings.homepageMultiPingTaskIds,
-    themeSettings.homepageMultiPingNodeTaskIds,
-  );
   const requestedBindings = themeSettings.homepagePingBindings;
-  const requestedMultiTaskIds =
-    requestMode === "multi"
-      ? themeSettings.homepageMultiPingTaskIds
-      : EMPTY_TASK_IDS;
-  const requestedNodeMultiTaskIds =
-    requestMode === "multi"
-      ? themeSettings.homepageMultiPingNodeTaskIds
-      : EMPTY_NODE_MULTI_TASK_IDS;
-  const hasRequestedVisiblePing =
-    resolvePingAssignmentKey(
-      effectiveUuids,
-      requestedBindings,
-      requestedMultiTaskIds,
-      requestedNodeMultiTaskIds,
-    ).length > 0;
+  const hasRequestedVisiblePing = effectiveUuids.length > 0;
 
   useLayoutEffect(() => {
     if (!themeSettings.isReady) return;
@@ -1292,8 +1292,6 @@ export function useHomepagePingOverview(viewMode: NodeViewMode) {
     ensurePingOverviewStarted(
       effectiveUuids,
       requestedBindings,
-      requestedMultiTaskIds,
-      requestedNodeMultiTaskIds,
     );
     return () => {
       activeConsumers -= 1;
@@ -1304,10 +1302,7 @@ export function useHomepagePingOverview(viewMode: NodeViewMode) {
     };
   }, [
     effectiveUuids,
-    requestMode,
     requestedBindings,
-    requestedMultiTaskIds,
-    requestedNodeMultiTaskIds,
     hasRequestedVisiblePing,
     themeSettings.isReady,
   ]);

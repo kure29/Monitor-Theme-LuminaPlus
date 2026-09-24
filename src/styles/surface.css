@@ -1187,6 +1187,34 @@ body::after {
   gap: 10px;
 }
 
+.multi-ping-config-line-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.multi-ping-config-mini-action {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.multi-ping-config-mini-action:hover:not(:disabled),
+.multi-ping-config-mini-action:focus-visible {
+  background: color-mix(in srgb, var(--accent-500) 8%, var(--surface));
+  color: var(--text-primary);
+}
+
+.multi-ping-config-mini-action:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+
 .multi-ping-config-line {
   display: flex;
   min-width: 0;

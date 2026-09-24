@@ -9,7 +9,7 @@ import {
   usePingBuckets,
 } from "@/hooks/usePingOverview";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
-import type { HomepagePingDisplayLine, HomepagePingLine } from "@/types/models";
+import type { HomepagePingDisplayLine } from "@/types/models";
 import { formatRenewalPrice } from "@/utils/billing";
 import { getExpireTextColor } from "@/utils/expireStatus";
 import { getTrafficResetDisplay } from "@/utils/trafficReset";
@@ -28,11 +28,8 @@ import {
 } from "@/utils/metricTone";
 import { resolveTrafficUsage, trafficTypeLabel, type TrafficDisplay } from "@/utils/traffic";
 import { resolveOsInfo } from "@/components/ui/OsLogo";
-import { buildFakeHomepagePingLine } from "@/utils/fakePing";
 import {
-  hasHomepagePingTaskBinding,
-  HOMEPAGE_MULTI_PING_TASK_COUNT,
-  resolveHomepageMultiPingTaskIds,
+  resolveVisibleHomepagePingTaskIds,
 } from "@/utils/pingTasks";
 
 interface NodeCardModelOptions {
@@ -58,30 +55,16 @@ export function useNodeCardModel(
   const {
     showCardGroup,
     fakePingForUnbound,
-    homepagePingBindings,
     enableHomepageMultiPing,
     homepageMultiPingTaskIds,
     homepageMultiPingNodeTaskIds,
   } = useThemeSettings();
-  const effectiveMultiPingTaskIds = useMemo(
-    () =>
-      resolveHomepageMultiPingTaskIds(
-        uuid,
-        homepageMultiPingTaskIds,
-        homepageMultiPingNodeTaskIds,
-      ),
-    [homepageMultiPingNodeTaskIds, homepageMultiPingTaskIds, uuid],
-  );
-  const multiPingActive =
-    includeMultiPing &&
-    enableHomepageMultiPing &&
-    effectiveMultiPingTaskIds.length === HOMEPAGE_MULTI_PING_TASK_COUNT;
+  const multiPingActive = includeMultiPing && enableHomepageMultiPing;
   const realPing = useNodePingOverview(uuid, !multiPingActive);
   const realPingLines = useNodePingOverviewLines(uuid, multiPingActive);
   const hasRealHomepagePingBinding = useMemo(
-    () =>
-      multiPingActive || hasHomepagePingTaskBinding(uuid, homepagePingBindings),
-    [homepagePingBindings, multiPingActive, uuid],
+    () => multiPingActive || realPing.isAssigned,
+    [multiPingActive, realPing.isAssigned],
   );
   const now = useHourlyClock();
   const ping = useFakePingFallback(
@@ -89,7 +72,6 @@ export function useNodeCardModel(
     realPing,
     metrics?.online === true,
     fakePingForUnbound && !multiPingActive,
-    homepagePingBindings,
   );
   // 状态跟随每条任务数据进入 Store,不再订阅全局 isRefreshing。这样后台轮询开始/结束
   // 时不会让所有节点卡片仅因一个布尔值变化而重渲染。
@@ -114,39 +96,29 @@ export function useNodeCardModel(
     ) {
       return [];
     }
-    return effectiveMultiPingTaskIds.map((taskId) => {
+    const visibleTaskIds = resolveVisibleHomepagePingTaskIds(
+      uuid,
+      realPingLines.map((line) => line.taskId),
+      homepageMultiPingTaskIds,
+      homepageMultiPingNodeTaskIds,
+    );
+    return visibleTaskIds.flatMap((taskId) => {
       const loaded = realPingLines.find((line) => line.taskId === taskId);
-      const sourceLine: HomepagePingLine =
-        loaded ?? {
-          taskId,
-          taskName: `任务 #${taskId}`,
-          client: uuid,
-          isAssigned: true,
-          loadState: "pending",
-          lastValue: null,
-          samples: [],
-          max: 1,
-          loss: null,
-        };
-      const line =
-        fakePingForUnbound &&
-        metrics?.online === true &&
-        sourceLine.isAssigned === false
-          ? buildFakeHomepagePingLine(
-              sourceLine,
-              Math.floor(bucketNow / 60_000),
-            )
-          : sourceLine;
-      return {
-        ...line,
-        buckets: buildPingBuckets(line, pingBucketCount, bucketNow),
-      };
+      if (!loaded) return [];
+      const sourceLine = loaded;
+      if (
+        sourceLine.isAssigned === false ||
+        (sourceLine.loadState === "pending" && sourceLine.lastValue == null && sourceLine.loss == null)
+      ) return [];
+      return [{
+        ...sourceLine,
+        buckets: buildPingBuckets(sourceLine, pingBucketCount, bucketNow),
+      }];
     });
   }, [
     bucketNow,
-    effectiveMultiPingTaskIds,
-    fakePingForUnbound,
-    metrics?.online,
+    homepageMultiPingNodeTaskIds,
+    homepageMultiPingTaskIds,
     multiPingActive,
     pingBucketCount,
     realPingLines,
@@ -190,7 +162,7 @@ export function useNodeCardModel(
       latencyColor: latencyHeatColor(ping.lastValue),
       lossColor: lossHeatColor(ping.loss),
       hasRealHomepagePingBinding,
-      // 保留旧字段供外部模型消费者兼容；它表示真实配置状态。
+      // 保留旧字段供外部模型消费者兼容；它表示后台当前分配状态。
       hasHomepagePingBinding: hasRealHomepagePingBinding,
       shouldRenderPingBars,
       pingLoading,
@@ -213,6 +185,7 @@ export function useNodeCardModel(
         ping,
         pingBuckets,
         homepagePingLines,
+        multiPingActive,
       };
     }
 
@@ -247,6 +220,7 @@ export function useNodeCardModel(
       ping,
       pingBuckets,
       homepagePingLines,
+      multiPingActive,
       traffic,
       ...metaModel,
       ...pingModel,
@@ -259,6 +233,7 @@ export function useNodeCardModel(
     };
   }, [
     homepagePingLines,
+    multiPingActive,
     meta,
     metrics,
     metaModel,

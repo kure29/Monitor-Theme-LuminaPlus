@@ -20,7 +20,6 @@ import { OsLogo } from "@/components/ui/OsLogo";
 import { useNodeCardModel } from "@/hooks/useNodeCardModel";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { formatBytes } from "@/utils/format";
-import { HOMEPAGE_MULTI_PING_TASK_COUNT } from "@/utils/pingTasks";
 import { speedRateColor, speedRateColorFromBytes } from "@/utils/metricTone";
 import { supportsFineHover } from "@/utils/mediaQuery";
 import { formatHealthBucketTooltip } from "./pingBucketText";
@@ -692,6 +691,7 @@ export const CompactNodeCard = memo(function CompactNodeCard({
     ping,
     pingBuckets,
     homepagePingLines,
+    multiPingActive,
     compactFooterTags: footerTags,
     subtitle,
     renewalPrice,
@@ -738,8 +738,8 @@ export const CompactNodeCard = memo(function CompactNodeCard({
         renewalPrice={renewalPrice}
       />
       <CompactTrafficBar traffic={traffic} uptimeLabel={uptimeLabel} reset={trafficReset} />
-      {homepagePingLines.length === HOMEPAGE_MULTI_PING_TASK_COUNT ? (
-        <MultiPingStatus
+      {multiPingActive ? (
+        homepagePingLines.length > 0 && <MultiPingStatus
           lines={homepagePingLines}
           density="compact"
           className="compact-node-bottom"

@@ -51,6 +51,17 @@ describe("monitor Ping history adapter", () => {
     ]);
     expect(result.records).toHaveLength(1);
   });
+
+  it("does not treat an old sample as a currently assigned task", () => {
+    const result = normalizePingHistory("9", 1, {
+      probes: { "2": "Google" },
+      ping: [
+        { task_id: 1, ts: 1_700_000_000, latency: 40 },
+        { task_id: 2, ts: 1_700_000_060, latency: 50 },
+      ],
+    });
+    expect(result.tasks.map((task) => task.id)).toEqual([2]);
+  });
 });
 
 describe("monitor resource history adapter", () => {

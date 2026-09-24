@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildBackendPingOverviewMap,
   buildPingOverviewMap,
   buildPingBuckets,
   buildPingOverviewItems,
-  resolveHomepagePingRequestMode,
   selectPersistablePingOverview,
 } from "@/hooks/usePingOverview";
 
@@ -156,6 +156,56 @@ function pingOverviewResponse(taskId: number, value: number) {
 }
 
 describe("homepage ping polling selection", () => {
+  it("uses backend probes for all card lines and drops a revoked task", async () => {
+    const loadOverview = vi.fn(async () => ({
+      records: [
+        { task_id: 1, time: NOW, value: 45, client: "node-a", count: 1, loss: 0 },
+        { task_id: 2, time: NOW, value: 72, client: "node-a", count: 1, loss: 0 },
+        { task_id: 2, time: NOW, value: 81, client: "node-b", count: 1, loss: 0 },
+      ],
+      tasks: [
+        { id: 1, name: "Cloudflare", clients: ["node-a"], interval: 60, loss: 0, type: "tcp", target: "", weight: 1 },
+        { id: 2, name: "Google", clients: ["node-a", "node-b"], interval: 60, loss: 0, type: "tcp", target: "", weight: 2 },
+      ],
+      intervalSeconds: 60,
+      clientWindowLoss: { "node-a": { 2: 12 } },
+    }));
+    const initial = await buildBackendPingOverviewMap(
+      1, ["node-b", "node-a"], { "2": ["node-a"] }, undefined, loadOverview as never,
+    );
+
+    expect(loadOverview).toHaveBeenCalledWith(1, undefined, expect.objectContaining({
+      entityIds: ["node-a", "node-b"],
+    }));
+    expect(initial.multiLines.get("node-a")?.map((line) => line.taskId)).toEqual([1, 2]);
+    expect(initial.multiLines.get("node-b")?.map((line) => line.taskId)).toEqual([2]);
+    expect(initial.singleItems.get("node-a")?.lastValue).toBe(72);
+    expect(initial.multiLines.get("node-a")?.[1]?.loss).toBe(12);
+
+    loadOverview.mockImplementationOnce(async () => ({
+      records: [{ task_id: 2, time: NOW, value: 80, client: "node-a", count: 1, loss: 0 }],
+      tasks: [{ id: 2, name: "Google", clients: ["node-a"], interval: 60, loss: 0, type: "tcp", target: "", weight: 2 }],
+      intervalSeconds: 60,
+      clientWindowLoss: { "node-a": { 2: 0 } },
+    }));
+    const afterRemoval = await buildBackendPingOverviewMap(
+      1, ["node-a"], { "1": ["node-a"] }, undefined, loadOverview as never,
+    );
+    expect(afterRemoval.multiLines.get("node-a")?.map((line) => line.taskId)).toEqual([2]);
+    expect(afterRemoval.singleItems.get("node-a")?.lastValue).toBe(80);
+
+    loadOverview.mockImplementationOnce(async () => ({
+      records: [], tasks: [], intervalSeconds: 60, clientWindowLoss: { "node-a": { 2: 0 } },
+    }));
+    const unassigned = await buildBackendPingOverviewMap(
+      1, ["node-a"], { "1": ["node-a"] }, undefined, loadOverview as never,
+    );
+    expect(unassigned.multiLines.get("node-a")).toEqual([]);
+    expect(unassigned.singleItems.get("node-a")).toMatchObject({
+      isAssigned: false, loadState: "ready",
+    });
+  });
+
   it("reports only the nodes affected by each completed task", async () => {
     const progress: Array<string[] | undefined> = [];
     const result = await buildPingOverviewMap(
@@ -183,18 +233,6 @@ describe("homepage ping polling selection", () => {
     expect(progress).toContainEqual(["node-b"]);
     expect(result.singleItems.get("node-a")?.lastValue).toBe(1);
     expect(result.singleItems.get("node-b")?.lastValue).toBe(2);
-  });
-
-  it("keeps large/compact and mini/list in their shared request modes", () => {
-    expect(resolveHomepagePingRequestMode("large", true, [1, 2, 3])).toBe("multi");
-    expect(resolveHomepagePingRequestMode("compact", true, [1, 2, 3])).toBe("multi");
-    expect(resolveHomepagePingRequestMode("mini", true, [1, 2, 3])).toBe("single");
-    expect(resolveHomepagePingRequestMode("list", true, [1, 2, 3])).toBe("single");
-    expect(resolveHomepagePingRequestMode("large", false, [1, 2, 3])).toBe("single");
-    expect(resolveHomepagePingRequestMode("large", true, [1, 2])).toBe("single");
-    expect(
-      resolveHomepagePingRequestMode("large", true, [], { "node-a": [1, 2, 3] }),
-    ).toBe("multi");
   });
 
   it("dedupes per-node multi-ping tasks and filters each request to affected nodes", async () => {

@@ -383,8 +383,8 @@ function sleep(ms: number, signal?: AbortSignal) {
 /**
  * 同一节点、同一窗口、同一序列的请求合并成一次。
  *
- * 首页三网模式会按任务各查一次同一个节点,而 `/api/nodes/{id}/metrics` 的响应里本来就带着
- * 该节点全部分配任务的记录:不去重时 3 个任务就是 3 份完全相同的响应,既是三倍流量,也把
+ * 首页多线路模式会按任务各查一次同一个节点,而 `/api/nodes/{id}/metrics` 的响应里本来就带着
+ * 该节点全部分配任务的记录:不去重时多个任务会返回多份完全相同的响应,增加流量,也把
  * hub 的 4 个历史查询槽位撞满,表现为卡片时不时"加载失败"。
  */
 const historyRequests = new Map<string, Promise<MonitorHistory>>();
@@ -624,14 +624,12 @@ export function normalizePingHistory(uuid: string, hours: number, payload: Monit
       windowLoss[parsedTaskId] = Math.min(100, Math.max(0, value));
     }
   }
-  // probes 包含已分配但暂时没有样本的任务。只根据记录建 task 会把刚分配、
-  // 离线或探测尚未上报的节点错判为「后台未绑定」。
-  const ids = new Set([
-    ...records.map((record) => record.task_id),
-    ...Object.keys(payload.probes ?? {})
-      .map(Number)
+  // probes 是当前后台分配的任务；历史记录可能仍含已撤销分配的旧任务。
+  // 旧版 monitor 没有 probes 时才退回到记录中的任务 ID。
+  const ids = new Set(
+    (payload.probes != null ? Object.keys(payload.probes).map(Number) : records.map((record) => record.task_id))
       .filter((id) => Number.isSafeInteger(id) && id > 0),
-  ]);
+  );
   const interval = inferIntervalSeconds((payload.ping ?? []).map((point) => point.ts));
   const tasks = [...ids]
     .sort((left, right) => left - right)

@@ -3,6 +3,8 @@ import {
   createHomepageMultiPingTaskOverride,
   normalizeHomepageMultiPingNodeTaskIds,
   normalizeHomepageMultiPingTaskIds,
+  orderHomepagePingTaskIds,
+  resolveVisibleHomepagePingTaskIds,
   invertHomepagePingTaskBindings,
   hasHomepagePingTaskBinding,
   normalizeHomepagePingTaskBindings,
@@ -59,11 +61,11 @@ describe("homepage ping task bindings", () => {
     expect(hasHomepagePingTaskBinding("node-c", bindings)).toBe(false);
   });
 
-  it("normalizes the global three-task selection in display order", () => {
-    expect(normalizeHomepageMultiPingTaskIds(["3", 1, 3, 2, 4])).toEqual([3, 1, 2]);
+  it("preserves any number of unique global tasks in display order", () => {
+    expect(normalizeHomepageMultiPingTaskIds(["3", 1, 3, 2, 4])).toEqual([3, 1, 2, 4]);
   });
 
-  it("keeps only complete per-node three-task overrides", () => {
+  it("keeps nonempty per-node overrides of different lengths", () => {
     expect(
       normalizeHomepageMultiPingNodeTaskIds({
         " node-a ": [3, 1, 2],
@@ -73,7 +75,8 @@ describe("homepage ping task bindings", () => {
       }),
     ).toEqual({
       "node-a": [3, 1, 2],
-      "node-c": [4, 5, 6],
+      "node-b": [1, 2],
+      "node-c": [4, 5, 6, 7],
     });
   });
 
@@ -90,13 +93,22 @@ describe("homepage ping task bindings", () => {
   it("initializes an override once without replacing an existing selection", () => {
     expect(
       createHomepageMultiPingTaskOverride(undefined, [1, 2, 3], [2, 3, 4, 5]),
-    ).toEqual([2, 3, 4]);
+    ).toEqual([2, 3, 4, 5]);
     expect(
       createHomepageMultiPingTaskOverride([4, 5, 6], [1, 2, 3], [1, 2, 3, 4, 5, 6]),
     ).toBeNull();
-    expect(
-      createHomepageMultiPingTaskOverride(undefined, [1, 2, 3], [1, 2]),
-    ).toBeNull();
+    expect(createHomepageMultiPingTaskOverride(undefined, [1, 2, 3], [1, 2])).toEqual([1, 2]);
+    expect(createHomepageMultiPingTaskOverride(undefined, [1, 2, 3], [7])).toEqual([7]);
+    expect(createHomepageMultiPingTaskOverride(undefined, [1, 2, 3], [])).toBeNull();
+  });
+
+  it("shows every backend task by default and applies optional order or per-node hiding", () => {
+    expect(orderHomepagePingTaskIds([1, 2, 3, 4], [3, 1])).toEqual([3, 1, 2, 4]);
+    expect(resolveVisibleHomepagePingTaskIds("node-a", [1, 2, 3, 4], [3, 1], {}))
+      .toEqual([3, 1, 2, 4]);
+    expect(resolveVisibleHomepagePingTaskIds("node-a", [1, 2, 3, 4], [3, 1], {
+      "node-a": [4, 2, 99],
+    })).toEqual([4, 2]);
   });
 
   it("uses multi-ping when available and falls back to each node's single binding", () => {
@@ -144,5 +156,16 @@ describe("homepage ping task bindings", () => {
     expect(mixedSelections.singleTaskIdsByClient).toEqual(
       new Map([["node-b", [9]]]),
     );
+
+    const variableSelections = resolveHomepagePingSelections(
+      ["node-a", "node-b"],
+      {},
+      [1, 2, 3, 4],
+      { "node-a": [7, 8] },
+    );
+    expect(variableSelections.multiTaskIdsByClient).toEqual(new Map([
+      ["node-a", [7, 8]],
+      ["node-b", [1, 2, 3, 4]],
+    ]));
   });
 });

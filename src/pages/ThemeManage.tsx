@@ -3,6 +3,8 @@ import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  ArrowDown,
+  ArrowUp,
   ChevronDown,
   ChevronUp,
   CircleDollarSign,
@@ -14,6 +16,7 @@ import {
   List,
   ListFilter,
   Moon,
+  Plus,
   RefreshCw,
   Rows3,
   Save,
@@ -23,6 +26,7 @@ import {
   Sparkles,
   Sun,
   SunMoon,
+  Trash2,
   Video,
   Wallpaper,
 } from "lucide-react";
@@ -73,7 +77,6 @@ import {
   sortHomeGroupOptions,
 } from "@/utils/homeNodes";
 import {
-  HOMEPAGE_MULTI_PING_TASK_COUNT,
   normalizeHomepageMultiPingNodeTaskIds,
   normalizeHomepageMultiPingTaskIds,
   type HomepageMultiPingNodeTaskIds,
@@ -81,10 +84,9 @@ import {
 } from "@/utils/pingTasks";
 import {
   assignHomepagePingClients,
-  getUnassignedHomepageMultiPingClients,
+  getInvalidHomepageMultiPingOverrides,
   pruneHomepagePingBindings,
   removeHomepagePingClient,
-  syncHomepagePingBindings,
 } from "@/utils/pingBindings";
 import {
   DEFAULT_THEME_SETTINGS,
@@ -209,7 +211,7 @@ function summarizeNodes(
   uuids: string[],
   clientsById: Map<string, AdminClient>,
 ) {
-  if (uuids.length === 0) return "未绑定节点";
+  if (uuids.length === 0) return "未设置优先节点";
   const names = uuids.map((uuid) => clientsById.get(uuid)?.name || uuid);
   const summary = names.join("、");
   return summary.length > 92 ? `${summary.slice(0, 92)}...` : summary;
@@ -414,7 +416,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
           </div>
           <div className="mt-2 text-[12px] text-[var(--text-secondary)]">
             <span className="font-medium text-[var(--text-primary)]">
-              首页选择 {assigned.length} 台 · 后台分配 {task.clients.length} 台
+              优先显示 {assigned.length} 台 · 后台分配 {task.clients.length} 台
             </span>
             <span className="mx-2 text-[var(--text-tertiary)]">·</span>
             <span title={task.target || ""}>{task.target || "未填写目标"}</span>
@@ -440,7 +442,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
               }}
               className="theme-manage-button is-compact"
             >
-              {allVisibleSelectableAssigned ? "已全选可用" : "全选可用"}
+              {allVisibleSelectableAssigned ? "已设为优先" : "设为优先"}
             </button>
           )}
           {assigned.length > 0 && (
@@ -455,7 +457,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
               }}
               className="theme-manage-button is-compact is-danger"
             >
-              清空节点
+              清除优先
             </button>
           )}
           <button
@@ -472,7 +474,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
       {expanded && (
         <div className="mt-4 border-t border-[var(--hairline)] pt-4">
           <p className="mb-3 text-[11px] text-[var(--text-tertiary)]">
-            仅选择后台已分配给此任务的节点；全选只作用于当前搜索结果，已选其他首页任务的节点会移到这里。
+            仅可为后台已分配此任务的节点设置优先显示；「设为优先」只作用于当前搜索结果。未设置时自动显示后台首条任务。每台节点只能优先显示一条任务。
           </p>
           <label className="surface-inset flex items-center gap-2 px-3 py-2">
             <Search size={14} className="text-[var(--text-tertiary)]" />
@@ -664,7 +666,6 @@ const MultiPingNodeConfigControl = memo(function MultiPingNodeConfigControl({
   globalTaskIds,
   nodeTaskIds,
   configuredNodeCount,
-  fakePingForUnbound,
   disabled,
   saving,
   saveDisabled,
@@ -677,7 +678,6 @@ const MultiPingNodeConfigControl = memo(function MultiPingNodeConfigControl({
   globalTaskIds: number[];
   nodeTaskIds: HomepageMultiPingNodeTaskIds;
   configuredNodeCount: number;
-  fakePingForUnbound: boolean;
   disabled: boolean;
   saving: boolean;
   saveDisabled: boolean;
@@ -694,7 +694,7 @@ const MultiPingNodeConfigControl = memo(function MultiPingNodeConfigControl({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-primary)]">
             <SlidersHorizontal size={14} />
-            按服务器覆盖
+            按服务器自定义显示
           </div>
           <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">
             已单独配置 {configuredNodeCount} / {clients.length} 台服务器
@@ -718,7 +718,6 @@ const MultiPingNodeConfigControl = memo(function MultiPingNodeConfigControl({
           tasks={tasks}
           globalTaskIds={globalTaskIds}
           nodeTaskIds={nodeTaskIds}
-          fakePingForUnbound={fakePingForUnbound}
           saving={saving}
           saveDisabled={saveDisabled}
           saveError={saveError}
@@ -787,17 +786,24 @@ export function ThemeManage() {
     editVersionRef.current += 1;
     setDraft((prev) => {
       const nextIds = [...prev.homepageMultiPingTaskIds];
-      if (rawValue === "") {
-        nextIds.splice(slot, 1);
-      } else {
-        nextIds[slot] = Number(rawValue);
-      }
+      const nextTaskId = Number(rawValue);
+      if (!Number.isSafeInteger(nextTaskId) || nextTaskId <= 0) return prev;
+      const occupiedSlot = nextIds.indexOf(nextTaskId);
+      if (occupiedSlot >= 0 && occupiedSlot !== slot) return prev;
+      nextIds[slot] = nextTaskId;
       const homepageMultiPingTaskIds = normalizeHomepageMultiPingTaskIds(nextIds);
       return JSON.stringify(homepageMultiPingTaskIds) ===
         JSON.stringify(prev.homepageMultiPingTaskIds)
         ? prev
         : { ...prev, homepageMultiPingTaskIds };
     });
+  }, []);
+  const changeMultiPingTasks = useCallback((update: (taskIds: number[]) => number[]) => {
+    editVersionRef.current += 1;
+    setDraft((prev) => ({
+      ...prev,
+      homepageMultiPingTaskIds: normalizeHomepageMultiPingTaskIds(update(prev.homepageMultiPingTaskIds)),
+    }));
   }, []);
   const patchNodeMultiPingTaskIds = useCallback(
     (next: HomepageMultiPingNodeTaskIds) => {
@@ -1026,9 +1032,6 @@ export function ThemeManage() {
   );
   const draftCostRateApiUrlInvalid =
     draft.costRateApiUrl.trim() !== "" && !isCostRateApiUrlValid(draft.costRateApiUrl.trim());
-  const draftMultiPingInvalid =
-    draft.enableHomepageMultiPing &&
-    draft.homepageMultiPingTaskIds.length !== HOMEPAGE_MULTI_PING_TASK_COUNT;
 
   // 由当前草稿拼出的设置 payload,保存请求和 dirty 判断都用它。草稿字段与设置同名,这里只做
   // 「编辑态 → 存储态」的换形与归一化;文本域(hiddenNodesText/costIgnoredText)和 ratingLabels
@@ -1131,35 +1134,21 @@ export function ThemeManage() {
         .length,
     [draft.homepageMultiPingNodeTaskIds, sortedClients],
   );
-  const unassignedMultiPingNodeCount = useMemo(
-    () => getUnassignedHomepageMultiPingClients(
+  const invalidMultiPingOverrideCount = useMemo(
+    () => getInvalidHomepageMultiPingOverrides(
       sortedTasks,
       sortedClients.map((client) => client.uuid),
-      draft.homepageMultiPingTaskIds,
       draft.homepageMultiPingNodeTaskIds,
     ).length,
-    [draft.homepageMultiPingNodeTaskIds, draft.homepageMultiPingTaskIds, sortedClients, sortedTasks],
+    [draft.homepageMultiPingNodeTaskIds, sortedClients, sortedTasks],
   );
-
-  const handleSyncPingBindings = () => {
-    editVersionRef.current += 1;
-    setDraft((prev) => ({
-      ...prev,
-      homepagePingBindings: syncHomepagePingBindings(
-        prev.homepagePingBindings,
-        sortedTasks,
-        sortedClients.map((client) => client.uuid),
-      ),
-    }));
-  };
 
   const handleSave = async (): Promise<boolean> => {
     if (
       !config?.theme ||
       savingDraftRef.current ||
       draftCostRateApiUrlInvalid ||
-      videoInputInvalid ||
-      draftMultiPingInvalid
+      videoInputInvalid
     ) {
       return false;
     }
@@ -1355,8 +1344,7 @@ export function ThemeManage() {
                 !isDirty ||
                 saving ||
                 draftCostRateApiUrlInvalid ||
-                videoInputInvalid ||
-                draftMultiPingInvalid
+                videoInputInvalid
               }
               className="theme-manage-button is-primary"
             >
@@ -1370,7 +1358,7 @@ export function ThemeManage() {
             <span className="theme-masthead-kicker">LUMINAPLUS · 主题控制台</span>
             <h1 className="theme-masthead-title">主题设置</h1>
             <p className="theme-masthead-desc">
-              集中调整 LuminaPlus 的展示偏好与首页延迟绑定；保存后配置存储在 monitor，
+              集中调整 LuminaPlus 的展示偏好与首页延迟显示；保存后配置存储在 monitor，
               所有设备和访客会读取同一份设置。
             </p>
           </div>
@@ -1380,12 +1368,8 @@ export function ThemeManage() {
               <dd>{config?.theme || "LuminaPlus"}</dd>
             </div>
             <div>
-              <dt>已绑定 Ping</dt>
-              <dd>
-                {draft.enableHomepageMultiPing
-                  ? `三网覆盖 ${multiPingConfiguredNodeCount} 台`
-                  : `${assignedNodeCount} / ${sortedClients.length}`}
-              </dd>
+              <dt>Ping 来源</dt>
+              <dd>后台自动同步</dd>
             </div>
           </dl>
         </div>
@@ -2236,10 +2220,7 @@ export function ThemeManage() {
         title="主页延迟检测"
         description={
           <>
-            单线路模式为每个节点绑定一项 Ping 任务；开启三网模式后，大卡片和小卡片默认展示三项全局任务，也可以为每台服务器单独覆盖探测点。迷你卡片与列表仍显示节点的单线路绑定。
-            {" "}
-            monitor 后台把任务分配给节点后，点击下方「同步后台分配」即可为首页补齐单线路选择；
-            也可以逐项选择已分配的节点。后台分配决定谁会探测，首页选择决定卡片显示哪条线路。
+            首页与服务器详情页读取同一份后台 Ping 数据。开启多线路后，按服务器自动显示已分配的任务，也可自定义顺序和显示线路；迷你卡片与列表可设置优先线路。
             {" "}
             如果当前还没有可用任务，请先前往
             {" "}
@@ -2247,17 +2228,8 @@ export function ThemeManage() {
               后台 Ping 管理
             </a>
             {" "}
-            创建任务，再回来完成绑定。
+            创建任务并分配给服务器。
           </>
-        }
-        aside={
-          <div className="text-[11px] text-[var(--text-tertiary)]">
-            {tasksLoading || clientsLoading
-              ? "载入中"
-              : draft.enableHomepageMultiPing
-                ? `已覆盖 ${multiPingConfiguredNodeCount} 台`
-                : `${sortedTasks.length} 个任务`}
-          </div>
         }
       >
         <div className="flex flex-col gap-4">
@@ -2271,20 +2243,15 @@ export function ThemeManage() {
             <label className="flex items-start justify-between gap-4">
               <span className="min-w-0">
                 <span className="block text-[13px] font-medium text-[var(--text-primary)]">
-                  开启三网模式
+                  开启多线路模式
                 </span>
                 <span className="mt-1 block text-[11px] leading-relaxed text-[var(--text-tertiary)]">
-                  大卡片和小卡片使用三网延迟；未单独配置的服务器继承下面的全局默认线路。
+                  大卡片和小卡片自动显示后台为每台服务器分配的全部 Ping 任务。
                 </span>
               </span>
               <input
                 type="checkbox"
                 checked={draft.enableHomepageMultiPing}
-                disabled={
-                  !draft.enableHomepageMultiPing &&
-                  !tasksLoading &&
-                  sortedTasks.length < HOMEPAGE_MULTI_PING_TASK_COUNT
-                }
                 onChange={(event) =>
                   patch("enableHomepageMultiPing", event.target.checked)
                 }
@@ -2296,34 +2263,36 @@ export function ThemeManage() {
               <div className="mt-4 border-t border-[var(--hairline)] pt-4">
                 <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-[12px] font-medium text-[var(--text-primary)]">
-                    全局默认线路
+                    全局优先顺序（可选）
                   </span>
                   <span className="text-[11px] text-[var(--text-tertiary)]">
-                    按顺序显示在节点卡片中
+                    未列出的后台任务仍会显示
                   </span>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
-                  {Array.from(
-                    { length: HOMEPAGE_MULTI_PING_TASK_COUNT },
-                    (_, slot) => {
+                  {draft.homepageMultiPingTaskIds.map((_, slot) => {
                       const selectedTaskId =
                         draft.homepageMultiPingTaskIds[slot];
                       const selectedTask = sortedTasks.find((task) => task.id === selectedTaskId);
                       const assignedCount = selectedTask?.clients.filter((uuid) => clientsById.has(uuid)).length ?? 0;
                       return (
-                        <label key={slot} className="min-w-0">
-                          <span className="mb-1.5 block text-[11px] font-medium text-[var(--text-secondary)]">
-                            线路 {slot + 1}
-                          </span>
+                        <div key={`${selectedTaskId}-${slot}`} className="min-w-0">
+                          <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-medium text-[var(--text-secondary)]">线路 {slot + 1}</span>
+                            <span className="flex gap-1">
+                              <button type="button" disabled={slot === 0} onClick={() => changeMultiPingTasks((ids) => { const next = [...ids]; [next[slot - 1], next[slot]] = [next[slot], next[slot - 1]]; return next; })} aria-label={`上移全局线路 ${slot + 1}`} className="multi-ping-config-mini-action"><ArrowUp size={13} /></button>
+                              <button type="button" disabled={slot === draft.homepageMultiPingTaskIds.length - 1} onClick={() => changeMultiPingTasks((ids) => { const next = [...ids]; [next[slot], next[slot + 1]] = [next[slot + 1], next[slot]]; return next; })} aria-label={`下移全局线路 ${slot + 1}`} className="multi-ping-config-mini-action"><ArrowDown size={13} /></button>
+                              <button type="button" onClick={() => changeMultiPingTasks((ids) => ids.filter((__, index) => index !== slot))} aria-label={`移除全局线路 ${slot + 1}`} className="multi-ping-config-mini-action"><Trash2 size={13} /></button>
+                            </span>
+                          </div>
                           <select
                             value={selectedTaskId ?? ""}
                             onChange={(event) =>
                               patchMultiPingTask(slot, event.target.value)
                             }
-                            aria-label={`三网线路 ${slot + 1}`}
+                            aria-label={`全局线路 ${slot + 1}`}
                             className="surface-inset w-full px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none"
                           >
-                            <option value="">选择 Ping 任务</option>
                             {selectedTaskId != null &&
                               !sortedTasks.some((task) => task.id === selectedTaskId) && (
                                 <option value={selectedTaskId}>
@@ -2348,34 +2317,26 @@ export function ThemeManage() {
                               后台已分配 {assignedCount} / {sortedClients.length} 台
                             </span>
                           )}
-                        </label>
+                        </div>
                       );
-                    },
-                  )}
+                    })}
                 </div>
-                <p
-                  className={clsx(
-                    "mt-3 text-[11px] leading-relaxed",
-                    draftMultiPingInvalid
-                      ? "text-[var(--status-error)]"
-                      : "text-[var(--text-tertiary)]",
-                  )}
-                  role={draftMultiPingInvalid ? "alert" : undefined}
-                >
-                  {draftMultiPingInvalid
-                    ? "请选满 3 个不同的 Ping 任务后再保存。"
-                    : "未设置单独覆盖的服务器都会使用这三项任务。"}
+                <button type="button" disabled={draft.homepageMultiPingTaskIds.length >= sortedTasks.length} onClick={() => changeMultiPingTasks((ids) => [...ids, sortedTasks.find((task) => !ids.includes(task.id))?.id ?? 0])} className="theme-manage-button is-compact mt-3">
+                  <Plus size={13} />添加优先线路
+                </button>
+                <p className="mt-3 text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+                  默认显示后台分配的全部线路；这里仅调整靠前顺序，移除优先项不会隐藏任务。按服务器配置可单独选择显示哪些线路。
                 </p>
-                {!draftMultiPingInvalid && unassignedMultiPingNodeCount > 0 && (
+                {invalidMultiPingOverrideCount > 0 && (
                   <div
                     role="status"
                     className="mt-3 rounded-[12px] border border-[color-mix(in_srgb,var(--status-warning)_35%,var(--hairline))] bg-[color-mix(in_srgb,var(--status-warning)_9%,var(--surface))] px-3 py-2 text-[12px] leading-relaxed text-[var(--text-secondary)]"
                   >
-                    {unassignedMultiPingNodeCount} 台服务器尚未在 monitor 后台完整分配所选线路；这些线路在首页无法显示真实延迟。请到
+                    {invalidMultiPingOverrideCount} 台服务器的单独配置包含后台已撤销的任务；首页会隐藏这些线路。请到
                     {" "}
                     <a href="/admin/ping" className="theme-manage-inline-link">后台 Ping 管理</a>
                     {" "}
-                    分配任务；若该服务器已有至少三项任务，也可在下方单独配置线路。
+                    重新分配任务，或在下方更新该服务器的显示线路。
                   </div>
                 )}
 
@@ -2385,15 +2346,13 @@ export function ThemeManage() {
                   globalTaskIds={draft.homepageMultiPingTaskIds}
                   nodeTaskIds={draft.homepageMultiPingNodeTaskIds}
                   configuredNodeCount={multiPingConfiguredNodeCount}
-                  fakePingForUnbound={draft.fakePingForUnbound}
-                  disabled={draftMultiPingInvalid || clientsLoading || tasksLoading}
+                  disabled={clientsLoading || tasksLoading}
                   saving={saving}
                   saveError={error}
                   saveDisabled={
                     !isDirty ||
                     draftCostRateApiUrlInvalid ||
-                    videoInputInvalid ||
-                    draftMultiPingInvalid
+                    videoInputInvalid
                   }
                   onChange={patchNodeMultiPingTaskIds}
                   onSave={handleSave}
@@ -2414,38 +2373,25 @@ export function ThemeManage() {
               />
             </label>
             <div className="surface-inset flex items-center justify-between gap-3 px-3 py-2 text-[12px] text-[var(--text-secondary)]">
-              <span>首页绑定总数</span>
+              <span>{draft.enableHomepageMultiPing ? "自定义显示" : "单线路优先设置"}</span>
               <strong className="text-[var(--text-primary)]">
                 {draft.enableHomepageMultiPing
-                  ? `${multiPingConfiguredNodeCount} 台单独覆盖`
-                  : `${assignedNodeCount} / ${sortedClients.length}`}
+                  ? `${multiPingConfiguredNodeCount} 台自定义显示`
+                  : `${assignedNodeCount} 台设置优先线路`}
               </strong>
             </div>
           </div>
 
-          {!tasksLoading && !clientsLoading && sortedTasks.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-tertiary)]">
-              <span>同步后台分配可补齐仅有一项任务的节点；已有且仍有效的线路会保留，多任务节点请手动选择。</span>
-              <button
-                type="button"
-                onClick={handleSyncPingBindings}
-                className="theme-manage-button is-compact"
-              >
-                同步后台分配
-              </button>
-            </div>
-          )}
-
           {draft.enableHomepageMultiPing && (
             <div className="text-[11px] text-[var(--text-tertiary)]">
-              下方单线路绑定继续用于迷你卡片和列表；大卡片与小卡片使用上方三项任务。
+              下方选择只影响迷你卡片和列表优先显示的任务；大卡片与小卡片按后台任务自动显示。
             </div>
           )}
 
           <ToggleRow
             field="fakePingForUnbound"
-            title="未绑定探测点显示模拟延迟"
-            desc="用户主动开启后，未绑定单线路 Ping 任务的在线节点，以及三网模式中没有真实样本的探测点，都会显示前端生成的模拟数据（延迟 1-10ms、丢包 0%）。这些数值会带「模拟」标记，与 monitor 上报的真实延迟区分开——它只用于视觉统一，不代表真实网络质量。"
+            title="后台未分配任务时显示模拟延迟"
+            desc="用户主动开启后，后台未分配 Ping 任务的在线节点会显示前端生成的模拟数据（延迟 1-10ms、丢包 0%）。多线路模式中不会生成模拟线路。模拟数值会带「模拟」标记，不代表真实网络质量。"
             checked={draft.fakePingForUnbound}
             onPatch={patch}
           />

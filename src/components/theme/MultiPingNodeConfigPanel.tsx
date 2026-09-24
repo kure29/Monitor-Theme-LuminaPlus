@@ -3,12 +3,16 @@ import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowDown,
+  ArrowUp,
   Check,
   ChevronRight,
+  Plus,
   RotateCcw,
   Save,
   Search,
   SlidersHorizontal,
+  Trash2,
   X,
 } from "lucide-react";
 import { clsx } from "clsx";
@@ -17,7 +21,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import type { AdminClient, PingTask } from "@/types/models";
 import {
   createHomepageMultiPingTaskOverride,
-  HOMEPAGE_MULTI_PING_TASK_COUNT,
+  orderHomepagePingTaskIds,
   type HomepageMultiPingNodeTaskIds,
 } from "@/utils/pingTasks";
 
@@ -35,7 +39,6 @@ interface MultiPingNodeConfigPanelProps {
   tasks: PingTask[];
   globalTaskIds: number[];
   nodeTaskIds: HomepageMultiPingNodeTaskIds;
-  fakePingForUnbound: boolean;
   saving: boolean;
   saveDisabled: boolean;
   saveError: string | null;
@@ -72,7 +75,6 @@ export function MultiPingNodeConfigPanel({
   tasks,
   globalTaskIds,
   nodeTaskIds,
-  fakePingForUnbound,
   saving,
   saveDisabled,
   saveError,
@@ -111,12 +113,12 @@ export function MultiPingNodeConfigPanel({
   const invalidTaskIdsByClient = useMemo(() => {
     const next = new Map<string, number[]>();
     clients.forEach((client) => {
-      const taskIds = nodeTaskIds[client.uuid] ?? globalTaskIds;
+      const taskIds = nodeTaskIds[client.uuid] ?? EMPTY_TASK_IDS;
       const invalidIds = invalidTaskIds(taskIds, client.uuid, taskClientsById);
       if (invalidIds.length > 0) next.set(client.uuid, invalidIds);
     });
     return next;
-  }, [clients, globalTaskIds, nodeTaskIds, taskClientsById]);
+  }, [clients, nodeTaskIds, taskClientsById]);
   const invalidClientCount = invalidTaskIdsByClient.size;
   const filteredClients = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -138,15 +140,15 @@ export function MultiPingNodeConfigPanel({
     [filteredClients, selectedUuid],
   );
   const selectedTaskIds = selectedClient ? nodeTaskIds[selectedClient.uuid] : undefined;
-  const effectiveTaskIds = selectedTaskIds ?? globalTaskIds;
   const selectedInvalidTaskIds = selectedClient
     ? (invalidTaskIdsByClient.get(selectedClient.uuid) ?? EMPTY_TASK_IDS)
     : EMPTY_TASK_IDS;
   const availableTaskIds = selectedClient
     ? tasks.filter((task) => taskSupportsClient(task.id, selectedClient.uuid, taskClientsById)).map((task) => task.id)
     : EMPTY_TASK_IDS;
-  const selectableTaskIds = fakePingForUnbound ? tasks.map((task) => task.id) : availableTaskIds;
-  const canEnableOverride = selectableTaskIds.length >= HOMEPAGE_MULTI_PING_TASK_COUNT;
+  const effectiveTaskIds = selectedTaskIds ?? orderHomepagePingTaskIds(availableTaskIds, globalTaskIds);
+  const selectableTaskIds = availableTaskIds;
+  const canEnableOverride = selectableTaskIds.length > 0;
   const nodeWindowStart = Math.max(
     0,
     Math.min(
@@ -226,6 +228,12 @@ export function MultiPingNodeConfigPanel({
     }
     onChange({ ...nodeTaskIds, [selectedClient.uuid]: nextTaskIds });
   };
+  const updateSelectedTasks = (update: (taskIds: number[]) => number[]) => {
+    if (!selectedClient || !selectedTaskIds) return;
+    const nextTaskIds = update(selectedTaskIds);
+    if (nextTaskIds.length === 0) return;
+    onChange({ ...nodeTaskIds, [selectedClient.uuid]: nextTaskIds });
+  };
 
   return createPortal(
     <div className="multi-ping-config-backdrop" onMouseDown={onClose}>
@@ -240,7 +248,7 @@ export function MultiPingNodeConfigPanel({
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[11px] font-semibold text-[var(--text-tertiary)]">
               <SlidersHorizontal size={14} />
-              三网延迟
+              多线路延迟
             </div>
             <h2
               id="multi-ping-config-title"
@@ -249,11 +257,9 @@ export function MultiPingNodeConfigPanel({
               按服务器配置探测点
             </h2>
             <p className="mt-1 text-[12px] text-[var(--text-secondary)]">
-              已单独配置 {customCount} / {clients.length} 台，其余继承全局默认
+              已单独配置 {customCount} / {clients.length} 台，其余自动显示后台分配的全部线路
               {invalidClientCount > 0
-                ? fakePingForUnbound
-                  ? `，${invalidClientCount} 台含后台未分配的探测点并将显示模拟数据。`
-                  : `，${invalidClientCount} 台含后台未分配的探测点。`
+                ? `，${invalidClientCount} 台含后台未分配的探测点，首页会隐藏这些线路。`
                 : "。"}
             </p>
           </div>
@@ -292,8 +298,8 @@ export function MultiPingNodeConfigPanel({
                 {(
                   [
                     ["all", `全部 ${clients.length}`],
-                    ["custom", `已覆盖 ${customCount}`],
-                    ["default", `继承 ${clients.length - customCount}`],
+                    ["custom", `已自定义 ${customCount}`],
+                    ["default", `后台自动 ${clients.length - customCount}`],
                   ] as const
                 ).map(([value, label]) => (
                   <button
@@ -367,25 +373,23 @@ export function MultiPingNodeConfigPanel({
                                 .join(" · ")
                             : [client.group, client.region]
                                 .filter(Boolean)
-                                .join(" · ") || "继承全局默认"}
+                                .join(" · ") || "后台自动同步"}
                         </span>
                       </span>
                       {invalidIds.length > 0 ? (
                         <span
                           className="multi-ping-config-status is-warning"
                           title={
-                            fakePingForUnbound
-                              ? `${invalidIds.map((taskId) => taskLabel(taskId, tasksById)).join("、")} 未在后台分配给此服务器，将显示模拟数据`
-                              : `${invalidIds.map((taskId) => taskLabel(taskId, tasksById)).join("、")} 未在后台分配给此服务器`
+                            `${invalidIds.map((taskId) => taskLabel(taskId, tasksById)).join("、")} 未在后台分配给此服务器，首页会隐藏这些线路`
                           }
                         >
                           <AlertTriangle size={12} />
-                          {fakePingForUnbound ? "将模拟" : "未分配"}
+                          未分配
                         </span>
                       ) : override ? (
                         <span className="multi-ping-config-status" title="已单独配置">
                           <Check size={12} />
-                          已覆盖
+                          已自定义
                         </span>
                       ) : (
                         <ChevronRight
@@ -444,7 +448,7 @@ export function MultiPingNodeConfigPanel({
                         探测点来源
                       </div>
                       <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-tertiary)]">
-                        覆盖只影响当前服务器，并保留线路顺序。
+                        自定义仅影响当前服务器；未选择的后台任务会在这台服务器的卡片上隐藏。
                       </p>
                     </div>
                     <div className="multi-ping-config-mode" aria-label="探测点来源">
@@ -454,7 +458,7 @@ export function MultiPingNodeConfigPanel({
                         onClick={clearOverride}
                         className={clsx(!selectedTaskIds && "is-active")}
                       >
-                        继承默认
+                        后台自动
                       </button>
                       <button
                         type="button"
@@ -465,10 +469,10 @@ export function MultiPingNodeConfigPanel({
                         title={
                           canEnableOverride
                             ? "为当前服务器单独选择探测点"
-                            : `monitor 后台只给这台服务器分配了 ${availableTaskIds.length} 项任务；单独配置需要 3 项`
+                            : "这台服务器没有可选择的 Ping 任务，请先在 monitor 后台分配"
                         }
                       >
-                        单独配置
+                        自定义显示
                       </button>
                     </div>
                   </div>
@@ -484,20 +488,19 @@ export function MultiPingNodeConfigPanel({
                           {selectedInvalidTaskIds
                             .map((taskId) => taskLabel(taskId, tasksById))
                             .join("、")} 未在 monitor 后台分配给此服务器。
-                          {fakePingForUnbound
-                            ? "模拟数据功能已开启，以上线路会显示模拟数据；模拟数据不代表真实网络质量。"
-                            : canEnableOverride
-                              ? "模拟数据功能未开启，以上线路不会生成延迟；可改用单独配置，选择后台已分配的探测点。"
-                              : "模拟数据功能未开启，以上线路不会生成延迟；请先在 monitor 后台为此服务器分配至少三项任务。"}
+                          {canEnableOverride
+                            ? "首页会隐藏这些线路；请更新自定义显示，选择后台已分配的探测点。"
+                            : "首页会隐藏这些线路；请先在 monitor 后台为此服务器分配 Ping 任务。"}
                         </span>
                       </div>
                     </div>
                   )}
 
                   <div className="multi-ping-config-lines">
-                    {Array.from(
-                      { length: HOMEPAGE_MULTI_PING_TASK_COUNT },
-                      (_, slot) => {
+                    {effectiveTaskIds.length === 0 && (
+                      <p className="text-[12px] text-[var(--text-tertiary)]">monitor 后台尚未给这台服务器分配 Ping 任务。</p>
+                    )}
+                    {effectiveTaskIds.map((_, slot) => {
                         const selectedTaskId = effectiveTaskIds[slot];
                         const selectedTaskSupported =
                           selectedTaskId != null &&
@@ -507,7 +510,7 @@ export function MultiPingNodeConfigPanel({
                             taskClientsById,
                           );
                         return (
-                          <label
+                          <div
                             key={slot}
                             className={clsx(
                               "multi-ping-config-line",
@@ -535,7 +538,7 @@ export function MultiPingNodeConfigPanel({
                                     <option
                                       key={task.id}
                                       value={task.id}
-                                      disabled={!fakePingForUnbound && !taskSupportsClient(
+                                      disabled={!taskSupportsClient(
                                         task.id,
                                         selectedClient.uuid,
                                         taskClientsById,
@@ -555,7 +558,7 @@ export function MultiPingNodeConfigPanel({
                                   <span className="truncate">
                                     {selectedTaskId != null
                                       ? taskLabel(selectedTaskId, tasksById)
-                                      : "尚未设置全局默认"}
+                                      : "后台未分配任务"}
                                   </span>
                                   {selectedTaskId != null && !selectedTaskSupported && (
                                     <span className="multi-ping-config-inline-warning">未分配</span>
@@ -563,21 +566,24 @@ export function MultiPingNodeConfigPanel({
                                 </span>
                               )}
                             </span>
-                          </label>
+                            {selectedTaskIds && (
+                              <span className="multi-ping-config-line-actions">
+                                <button type="button" disabled={slot === 0} onClick={() => updateSelectedTasks((ids) => { const next = [...ids]; [next[slot - 1], next[slot]] = [next[slot], next[slot - 1]]; return next; })} aria-label={`上移线路 ${slot + 1}`} className="multi-ping-config-mini-action"><ArrowUp size={13} /></button>
+                                <button type="button" disabled={slot === selectedTaskIds.length - 1} onClick={() => updateSelectedTasks((ids) => { const next = [...ids]; [next[slot], next[slot + 1]] = [next[slot + 1], next[slot]]; return next; })} aria-label={`下移线路 ${slot + 1}`} className="multi-ping-config-mini-action"><ArrowDown size={13} /></button>
+                                <button type="button" disabled={selectedTaskIds.length === 1} onClick={() => updateSelectedTasks((ids) => ids.filter((__, index) => index !== slot))} aria-label={`移除线路 ${slot + 1}`} className="multi-ping-config-mini-action"><Trash2 size={13} /></button>
+                              </span>
+                            )}
+                          </div>
                         );
-                      },
-                    )}
+                      })}
                   </div>
 
                   {selectedTaskIds && (
-                    <button
-                      type="button"
-                      onClick={clearOverride}
-                      className="theme-manage-button is-compact"
-                    >
-                      <RotateCcw size={13} />
-                      恢复全局默认
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" disabled={selectableTaskIds.every((id) => selectedTaskIds.includes(id))} onClick={() => updateSelectedTasks((ids) => { const nextId = selectableTaskIds.find((id) => !ids.includes(id)); return nextId == null ? ids : [...ids, nextId]; })} className="theme-manage-button is-compact"><Plus size={13} />添加线路</button>
+                      <button type="button" disabled={availableTaskIds.length === 0 || availableTaskIds.every((id) => selectedTaskIds.includes(id)) && selectedTaskIds.length === availableTaskIds.length} onClick={() => updateSelectedTasks(() => availableTaskIds)} className="theme-manage-button is-compact">选用全部已分配</button>
+                      <button type="button" onClick={clearOverride} className="theme-manage-button is-compact"><RotateCcw size={13} />恢复后台自动</button>
+                    </div>
                   )}
                 </div>
               </>

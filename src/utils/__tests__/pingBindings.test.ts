@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assignHomepagePingClients,
-  getUnassignedHomepageMultiPingClients,
+  getInvalidHomepageMultiPingOverrides,
   removeHomepagePingClient,
   syncHomepagePingBindings,
 } from "@/utils/pingBindings";
@@ -36,8 +36,8 @@ describe("homepage ping binding editor", () => {
     });
   });
 
-  it("flags nodes whose selected global tasks have not been assigned in monitor", () => {
-    expect(getUnassignedHomepageMultiPingClients(
+  it("flags only stale per-node display overrides", () => {
+    expect(getInvalidHomepageMultiPingOverrides(
       [
         { id: 1, clients: ["node-b"] },
         { id: 2, clients: ["node-b"] },
@@ -46,8 +46,7 @@ describe("homepage ping binding editor", () => {
         { id: 5, clients: ["node-a"] },
       ],
       ["node-a", "node-b"],
-      [1, 2, 4],
-      {},
+      { "node-a": [1, 3], "node-b": [1, 2, 4] },
     )).toEqual(["node-a"]);
   });
 });

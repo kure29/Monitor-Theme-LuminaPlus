@@ -1,6 +1,6 @@
-import type { HomepagePingLine, PingOverviewItem } from "@/types/models";
+import type { PingOverviewItem } from "@/types/models";
 
-// 未绑定首页 Ping 任务的节点用这份前端生成的"模拟延迟"填充卡片,避免与已绑定节点混排时出现
+// 后台未分配 Ping 任务的节点用这份前端生成的"模拟延迟"填充卡片,避免与已分配节点混排时出现
 // "未配置"占位。纯展示数据:不发请求、不代表真实网络质量,是否启用由 fakePingForUnbound 决定。
 
 // 最近一小时、每分钟一个样本,经 usePingBuckets 聚合成首页 24 桶。
@@ -50,7 +50,7 @@ function smoothUnitAt(seed: number, slot: number) {
 }
 
 /**
- * 生成未绑定节点的模拟 PingOverviewItem。`minuteIndex` 是绝对分钟槽 Math.floor(now / 60000):
+ * 生成后台未分配节点的模拟 PingOverviewItem。`minuteIndex` 是绝对分钟槽 Math.floor(now / 60000):
  * 每个点由 (uuid, 分钟槽) 唯一确定,分钟推进时序列前移一格、只新增最新点,与真实滚动窗口一致。
  */
 export function buildFakePingItem(uuid: string, minuteIndex: number): PingOverviewItem {
@@ -77,23 +77,5 @@ export function buildFakePingItem(uuid: string, minuteIndex: number): PingOvervi
     samples,
     max,
     loss: 0,
-  };
-}
-
-/**
- * 把三网模式中后台未绑定的单条线路替换为模拟数据。节点 UUID 与任务 ID 一起作为种子，
- * 同一台节点的三条线路会保持各自稳定、互不相同的曲线；展示模型仍保留真实节点 UUID、
- * 任务名称和任务顺序。
- */
-export function buildFakeHomepagePingLine(
-  line: HomepagePingLine,
-  minuteIndex: number,
-): HomepagePingLine {
-  const fake = buildFakePingItem(`${line.client}:${line.taskId}`, minuteIndex);
-  return {
-    ...line,
-    ...fake,
-    client: line.client,
-    loadState: "ready",
   };
 }

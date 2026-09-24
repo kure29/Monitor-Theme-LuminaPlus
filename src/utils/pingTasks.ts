@@ -1,6 +1,5 @@
 export type HomepagePingTaskBindings = Record<string, string[]>;
 export type HomepageMultiPingNodeTaskIds = Record<string, number[]>;
-export const HOMEPAGE_MULTI_PING_TASK_COUNT = 3;
 
 const invertedBindingsCache = new WeakMap<HomepagePingTaskBindings, Map<string, number>>();
 
@@ -23,7 +22,6 @@ export function normalizeHomepageMultiPingTaskIds(value: unknown): number[] {
           : null;
     if (taskId == null || normalized.includes(taskId)) continue;
     normalized.push(taskId);
-    if (normalized.length === HOMEPAGE_MULTI_PING_TASK_COUNT) break;
   }
   return normalized;
 }
@@ -42,7 +40,7 @@ export function normalizeHomepageMultiPingNodeTaskIds(
   for (const [rawUuid, rawTaskIds] of entries) {
     const uuid = rawUuid.trim();
     const taskIds = normalizeHomepageMultiPingTaskIds(rawTaskIds);
-    if (!uuid || taskIds.length !== HOMEPAGE_MULTI_PING_TASK_COUNT) continue;
+    if (!uuid || taskIds.length === 0) continue;
     normalized[uuid] = taskIds;
   }
   return normalized;
@@ -54,14 +52,12 @@ export function resolveHomepageMultiPingTaskIds(
   nodeTaskIds: HomepageMultiPingNodeTaskIds = {},
 ): number[] {
   const overrideTaskIds = normalizeHomepageMultiPingTaskIds(nodeTaskIds[clientUuid]);
-  if (overrideTaskIds.length === HOMEPAGE_MULTI_PING_TASK_COUNT) {
+  if (overrideTaskIds.length > 0) {
     return overrideTaskIds;
   }
 
   const normalizedGlobalTaskIds = normalizeHomepageMultiPingTaskIds(globalTaskIds);
-  return normalizedGlobalTaskIds.length === HOMEPAGE_MULTI_PING_TASK_COUNT
-    ? normalizedGlobalTaskIds
-    : [];
+  return normalizedGlobalTaskIds;
 }
 
 export function createHomepageMultiPingTaskOverride(
@@ -76,13 +72,35 @@ export function createHomepageMultiPingTaskOverride(
       (taskId) => Number.isSafeInteger(taskId) && taskId > 0,
     ),
   );
-  const nextTaskIds = normalizeHomepageMultiPingTaskIds([
-    ...globalTaskIds.filter((taskId) => available.has(taskId)),
-    ...available,
-  ]);
-  return nextTaskIds.length === HOMEPAGE_MULTI_PING_TASK_COUNT
-    ? nextTaskIds
-    : null;
+  const orderedTaskIds = orderHomepagePingTaskIds([...available], globalTaskIds);
+  return orderedTaskIds.length > 0 ? orderedTaskIds : null;
+}
+
+/** 后台分配是任务来源；全局配置只把指定任务排在前面，未列出的任务继续显示。 */
+export function orderHomepagePingTaskIds(
+  assignedTaskIds: number[],
+  preferredTaskIds: number[],
+): number[] {
+  const assigned = normalizeHomepageMultiPingTaskIds(assignedTaskIds);
+  const assignedSet = new Set(assigned);
+  const preferred = normalizeHomepageMultiPingTaskIds(preferredTaskIds)
+    .filter((taskId) => assignedSet.has(taskId));
+  const preferredSet = new Set(preferred);
+  return [...preferred, ...assigned.filter((taskId) => !preferredSet.has(taskId))];
+}
+
+/** 单独配置显式选择要显示的任务，其余服务器始终显示后台分配的全部任务。 */
+export function resolveVisibleHomepagePingTaskIds(
+  uuid: string,
+  assignedTaskIds: number[],
+  preferredTaskIds: number[],
+  nodeTaskIds: HomepageMultiPingNodeTaskIds,
+): number[] {
+  const ordered = orderHomepagePingTaskIds(assignedTaskIds, preferredTaskIds);
+  const override = normalizeHomepageMultiPingTaskIds(nodeTaskIds[uuid]);
+  if (override.length === 0) return ordered;
+  const assigned = new Set(ordered);
+  return override.filter((taskId) => assigned.has(taskId));
 }
 
 export function normalizeHomepagePingTaskBindings(
@@ -166,7 +184,7 @@ export function resolveHomepagePingSelections(
       multiTaskIds,
       nodeMultiTaskIds,
     );
-    if (selectedTaskIds.length === HOMEPAGE_MULTI_PING_TASK_COUNT) {
+    if (selectedTaskIds.length > 0) {
       multiTaskIdsByClient.set(uuid, selectedTaskIds);
       continue;
     }

@@ -398,7 +398,7 @@ export function NodeGrid() {
     : configuredSortDirection;
   const [selectedGroup, setSelectedGroup] = useState(HOME_ALL_GROUP);
   const [selectedRegion, setSelectedRegion] = useState(HOME_ALL_REGION);
-  useHomepagePingOverview(mode);
+  useHomepagePingOverview();
 
   // 摘要不含名称，先从完整 meta 解析主题隐藏列表，再统一过滤各类数据。
   const hiddenUuids = useHiddenNodeUuids();

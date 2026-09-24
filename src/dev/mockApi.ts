@@ -91,6 +91,8 @@ const pingTasks = [
   { id: 1, name: "Cloudflare", target: "1.1.1.1:443", interval: 60, nodes: [1, 2, 3, 4, 5] },
   { id: 2, name: "Google", target: "8.8.8.8:443", interval: 60, nodes: [1, 2, 3, 4, 5] },
   { id: 3, name: "Tokyo", target: "example.jp:443", interval: 60, nodes: [1, 2, 5] },
+  { id: 4, name: "Frankfurt", target: "example.de:443", interval: 60, nodes: [1, 2] },
+  { id: 5, name: "Singapore", target: "example.sg:443", interval: 60, nodes: [1, 2] },
 ];
 
 function dateAfter(days: number) {

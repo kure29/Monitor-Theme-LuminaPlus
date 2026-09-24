@@ -159,10 +159,10 @@ describe("normalizeThemeSettings", () => {
       homepageMultiPingTaskIds: [3, 1, 3, 2, 4],
     });
     expect(resolved.enableHomepageMultiPing).toBe(true);
-    expect(resolved.homepageMultiPingTaskIds).toEqual([3, 1, 2]);
+    expect(resolved.homepageMultiPingTaskIds).toEqual([3, 1, 2, 4]);
   });
 
-  it("normalizes complete per-node multi-ping overrides and drops malformed entries", () => {
+  it("normalizes per-node multi-ping overrides of different lengths", () => {
     const resolved = normalizeThemeSettings({
       homepageMultiPingNodeTaskIds: {
         "node-a": [4, 2, 3],
@@ -172,6 +172,7 @@ describe("normalizeThemeSettings", () => {
 
     expect(resolved.homepageMultiPingNodeTaskIds).toEqual({
       "node-a": [4, 2, 3],
+      "node-b": [1, 2],
     });
     expect(normalizeThemeSettings({}).homepageMultiPingNodeTaskIds).toEqual({});
   });
