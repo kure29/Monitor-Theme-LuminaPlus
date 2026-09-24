@@ -4,6 +4,7 @@ import { monitorNodeToInfo, monitorNodeToRealtime } from "@/services/api";
 const node = {
   id: 7,
   name: "Tokyo",
+  group: "Asia",
   sort: 20,
   public: true,
   online: true,
@@ -54,6 +55,7 @@ describe("monitor node adapter", () => {
     expect(monitorNodeToInfo(node)).toMatchObject({
       uuid: "7",
       name: "Tokyo",
+      group: "Asia",
       region: "JP",
       virtualization: "KVM",
       traffic_limit_type: "sum",

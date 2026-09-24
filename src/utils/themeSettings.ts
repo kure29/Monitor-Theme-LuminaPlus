@@ -348,8 +348,7 @@ export function normalizeThemeSettings(
 /**
  * 把设置序列化成可迁移的 JSON 文本。
  *
- * 两个用途共用同一份格式:在主题设置页导出/导入(把配置从手机搬到电脑),
- * 以及写成站点默认文件 `<themes-dir>/LuminaPlus/theme-settings.json`。
+ * 在主题设置页导出/导入备份，也可用于迁移旧版 theme-settings.json。
  * 先归一化,所以导出的内容永远是完整、可再次导入的集合。
  */
 export function serializeThemeSettings(

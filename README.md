@@ -22,10 +22,7 @@ LuminaPlus 是为 [monitor](https://github.com/monitor-probe/monitor) 移植的�
 
 ## 当前限制
 
-- monitor 的主题契约里没有主题设置存储接口，所以主题设置默认保存在当前浏览器的
-  `localStorage`，不会自动同步到其他设备或访客；多端一致的办法见
-  [主题设置保存在哪里](#主题设置保存在哪里)。
-- monitor 目前没有公开分组、标签和公开备注字段，相应筛选项在无数据时自动隐藏。
+- monitor 目前没有公开标签和公开备注字段，相应展示项在无数据时自动隐藏；节点分组已支持。
 - monitor 不向匿名主题下发 IP 地址；本主题不依赖额外的 IP 信息插件。
 - monitor 历史接口目前不提供 Swap、连接数、进程数和 Load 历史，这些指标仍可显示实时值。
 - 首页 Ping 需要在主题设置中绑定 monitor 的探测任务；节点详情页可直接读取已分配探测任务的历史。
@@ -33,20 +30,14 @@ LuminaPlus 是为 [monitor](https://github.com/monitor-probe/monitor) 移植的�
 
 ## 主题设置保存在哪里
 
-monitor 只给主题开放同源只读接口（`/api/me`、`/api/nodes`、`/api/nodes/{id}/metrics`、`/api/ws`），
-没有主题设置存储接口，所以本主题的设置分成两层：
+新版 monitor 提供 `GET/PUT /api/themes/LuminaPlus/config`。站长登录后在主题设置页保存，
+配置写入 hub 数据库；所有设备和访客读取同一份配置，更新或重装主题不会清除它。
+`PUT` 需要已安装 LuminaPlus 且保持登录。保存失败会在设置页显示接口错误，不会假报成功。
 
-1. **站点默认值（可选）**：`<themes-dir>/LuminaPlus/theme-settings.json`。它与 `theme.json`
-   同一层，由 hub 当普通静态文件下发，是所有访客的默认值。
-2. **本浏览器设置**：主题设置页（首页右上角「管理」→ 主题设置）保存到 `localStorage`，
-   优先级高于站点默认值，用于在单台设备上临时调整。
-
-设置页第 10 节「配置迁移」就是这份 JSON 的导入/导出入口：在手机上「导出当前配置」→「复制」，
-换到电脑打开同一个页面「导入到表单」→「保存设置」，整套配置即搬到新设备。把同一份 JSON
-保存成主题目录里的 `theme-settings.json`，则所有访客（含未登录）都会看到这套默认值。
-
-设置内容变化后需要重新放到主题目录：monitor 后台的「上传主题包 / 从 GitHub 更新」是整体替换
-主题目录，站点默认文件不会保留；本浏览器设置不受影响。
+从旧版升级时，旧浏览器的 `localStorage` 配置不会覆盖服务器设置。站长可在原设备打开
+设置页第 10 节，点击「导入旧版浏览器配置」，核对表单后点击「保存设置」完成迁移。
+同一节仍可导出 JSON 备份，或把备份导入表单。旧版手工放置的 `theme-settings.json`
+不再作为配置来源；如需迁移其中内容，可将 JSON 粘贴到导入框再保存。
 
 ## 开发
 
@@ -96,7 +87,6 @@ preview.png
 ```text
 <themes-dir>/LuminaPlus/
 ├── theme.json
-├── theme-settings.json   # 可选：站点默认配置
 ├── preview.png
 └── dist/
     └── index.html

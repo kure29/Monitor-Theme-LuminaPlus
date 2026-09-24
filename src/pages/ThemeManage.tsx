@@ -36,11 +36,11 @@ import { useHourlyClock } from "@/hooks/useClock";
 import { queryClient } from "@/services/queryClient";
 import {
   ApiRequestError,
-  clearThemeSettings,
+  clearLegacyThemeSettings,
   getAdminClients,
   getAdminPingTasks,
   getNodes,
-  loadSiteThemeSettings,
+  readLegacyThemeSettings,
   saveThemeSettings,
 } from "@/services/api";
 import type { AdminClient, PingTask, ThemeSettings } from "@/types/models";
@@ -823,6 +823,7 @@ export function ThemeManage() {
   // 配置迁移面板的 JSON 文本与提示;导出/导入共用同一段文本。
   const [transferText, setTransferText] = useState("");
   const [transferMessage, setTransferMessage] = useState<string | null>(null);
+  const [legacyThemeSettings, setLegacyThemeSettings] = useState(readLegacyThemeSettings);
   const savingDraftRef = useRef<ThemeDraft | null>(null);
   const editVersionRef = useRef(0);
 
@@ -899,14 +900,6 @@ export function ThemeManage() {
     staleTime: 30_000,
     retry: false,
   });
-  // 站点默认文件是否已提供,只用于在迁移面板里给出准确的提示。
-  const { data: siteThemeSettings } = useQuery({
-    queryKey: ["theme-site-settings"],
-    queryFn: () => loadSiteThemeSettings(),
-    staleTime: Infinity,
-    retry: false,
-  });
-
   const sourceThemeSettings = useMemo(
     () => normalizeThemeSettings(config?.theme_settings),
     [config?.theme_settings],
@@ -1233,6 +1226,8 @@ export function ThemeManage() {
       };
       delete nextSettings.homepagePingTask;
       await saveThemeSettings(config.theme, nextSettings);
+      clearLegacyThemeSettings();
+      setLegacyThemeSettings({});
       await queryClient.invalidateQueries({ queryKey: ["public"] });
       if (editVersionRef.current === submittedEditVersion) {
         setMessage("主题设置已保存");
@@ -1274,7 +1269,7 @@ export function ThemeManage() {
     if (!transferText.trim()) return;
     try {
       await navigator.clipboard.writeText(transferText);
-      setTransferMessage("已复制到剪贴板,可在另一台设备粘贴导入");
+      setTransferMessage("已复制到剪贴板，可留作配置备份");
     } catch {
       setTransferMessage("复制失败:请手动全选文本框内容复制");
     }
@@ -1283,6 +1278,7 @@ export function ThemeManage() {
   const handleImportSettings = () => {
     try {
       const imported = parseThemeSettings(transferText);
+      editVersionRef.current += 1;
       seedDrafts(imported);
       setTransferMessage("已载入表单,确认无误后点右上角「保存设置」");
     } catch (importError) {
@@ -1294,10 +1290,19 @@ export function ThemeManage() {
     }
   };
 
-  const handleClearLocalSettings = async () => {
-    clearThemeSettings();
-    await queryClient.invalidateQueries({ queryKey: ["public"] });
-    setTransferMessage("已清除本浏览器保存的设置,回退到站点默认值");
+  const handleImportLegacySettings = () => {
+    editVersionRef.current += 1;
+    seedDrafts(normalizeThemeSettings({
+      ...(config?.theme_settings ?? {}),
+      ...legacyThemeSettings,
+    }));
+    setTransferMessage("已载入旧版浏览器配置；核对后点击「保存设置」同步到所有设备");
+  };
+
+  const handleClearLegacySettings = () => {
+    clearLegacyThemeSettings();
+    setLegacyThemeSettings({});
+    setTransferMessage("已清除旧版浏览器配置");
   };
 
   if (configLoading) {
@@ -1416,8 +1421,8 @@ export function ThemeManage() {
             <span className="theme-masthead-kicker">LUMINAPLUS · 主题控制台</span>
             <h1 className="theme-masthead-title">主题设置</h1>
             <p className="theme-masthead-desc">
-              集中调整 LuminaPlus 的展示偏好与首页延迟绑定；设置保存在当前浏览器，需要多端一致时用
-              第 10 节的「配置迁移」导出后在另一台设备导入。
+              集中调整 LuminaPlus 的展示偏好与首页延迟绑定；保存后配置存储在 monitor，
+              所有设备和访客会读取同一份设置。
             </p>
           </div>
           <dl className="theme-masthead-meta">
@@ -2514,16 +2519,11 @@ export function ThemeManage() {
 
       <InstancePanel
         kicker={<><span className="instance-panel-kicker-num">10</span>迁移</>}
-        title="配置迁移与站点默认值"
+        title="配置备份与旧版迁移"
         description={
           <>
-            monitor 的主题契约里没有主题设置存储接口,所以设置只保存在当前浏览器:在手机上
-            保存不会自动出现在电脑上。把这里的 JSON 复制到另一台设备的同一个页面导入,即可
-            复制整套配置;同一份 JSON 放到主题目录的
-            {" "}
-            <code className="theme-manage-inline-code">theme-settings.json</code>
-            {" "}
-            (与 theme.json 同层)则会成为所有访客的默认值。
+            当前配置保存在 monitor 的数据库，主题更新后仍会保留。这里可以导出 JSON 备份，
+            或把旧版配置导入表单后保存到服务器。
           </>
         }
         aside={<Share2 size={16} />}
@@ -2536,7 +2536,7 @@ export function ThemeManage() {
             <textarea
               value={transferText}
               onChange={(event) => setTransferText(event.target.value)}
-              placeholder="点「导出当前配置」生成，或粘贴另一台设备导出的 JSON"
+              placeholder="点「导出当前配置」生成，或粘贴之前备份的 JSON"
               spellCheck={false}
               className="surface-inset min-h-[168px] w-full resize-y px-3 py-2 font-mono text-[11px] leading-relaxed outline-none"
               aria-label="配置 JSON"
@@ -2567,23 +2567,30 @@ export function ThemeManage() {
             >
               导入到表单
             </button>
-            <button
-              type="button"
-              onClick={() => void handleClearLocalSettings()}
-              className="theme-manage-button"
-            >
-              清除本浏览器设置
-            </button>
+            {Object.keys(legacyThemeSettings).length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleImportLegacySettings}
+                  className="theme-manage-button"
+                >
+                  导入旧版浏览器配置
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearLegacySettings}
+                  className="theme-manage-button"
+                >
+                  清除旧版浏览器配置
+                </button>
+              </>
+            )}
           </div>
 
           <p className="text-[11px] leading-relaxed text-[var(--text-tertiary)]" role="status">
-            站点默认文件 <code className="theme-manage-inline-code">/theme-settings.json</code>:
-            {" "}
-            {siteThemeSettings == null
-              ? "检测中…"
-              : Object.keys(siteThemeSettings).length > 0
-                ? `已提供(${Object.keys(siteThemeSettings).length} 项),本浏览器保存的设置优先于它;更新或重装主题会替换整个主题目录,需要重新放回该文件`
-                : "未提供,所有访客都使用主题自带默认值"}
+            {Object.keys(legacyThemeSettings).length > 0
+              ? `发现旧版浏览器配置（${Object.keys(legacyThemeSettings).length} 项），导入并保存后即可迁移到 monitor。`
+              : "配置已由 monitor 统一存储；旧版浏览器配置不会覆盖服务器设置。"}
             {transferMessage ? ` · ${transferMessage}` : ""}
           </p>
         </div>

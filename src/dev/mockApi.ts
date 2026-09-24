@@ -205,10 +205,8 @@ function json(data: unknown, init?: ResponseInit) {
   });
 }
 
-function installDefaultSettings() {
-  const key = "monitor-theme-luminaplus:settings";
-  if (localStorage.getItem(key)) return;
-  localStorage.setItem(key, JSON.stringify({
+function defaultThemeSettings() {
+  return {
     desktopNodeViewMode: "compact",
     mobileNodeViewMode: "compact",
     showHomeOverview: true,
@@ -225,12 +223,21 @@ function installDefaultSettings() {
     showPingChart: true,
     showTodayTrafficPopover: true,
     homepagePingBindings: { "2": ["1", "2", "3", "4", "5"] },
-  }));
+  };
 }
 
 export function installDevMockApi() {
   sessionStorage.setItem("monitor-luminaplus:dev-mock", "1");
-  installDefaultSettings();
+  const configKey = "monitor-luminaplus:dev-theme-config";
+  let themeSettings = defaultThemeSettings() as Record<string, unknown>;
+  try {
+    const saved: unknown = JSON.parse(sessionStorage.getItem(configKey) ?? "null");
+    if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+      themeSettings = saved as Record<string, unknown>;
+    }
+  } catch {
+    // An invalid mock value should not prevent the preview from loading.
+  }
   const nativeFetch = window.fetch.bind(window);
   const adminMode = new URLSearchParams(window.location.search).get("admin") === "1";
 
@@ -250,6 +257,19 @@ export function installDevMockApi() {
     }
     if (url.pathname === "/api/me") {
       return json({ authed: adminMode, github: false, site_name: "Lumina Ops", public_page: true });
+    }
+    if (url.pathname === "/api/themes/LuminaPlus/config") {
+      if (request.method === "GET") return json(themeSettings);
+      if (request.method === "PUT" && adminMode) {
+        const next: unknown = await request.json();
+        if (!next || typeof next !== "object" || Array.isArray(next)) {
+          return json({ message: "expected an object" }, { status: 400 });
+        }
+        themeSettings = next as Record<string, unknown>;
+        sessionStorage.setItem(configKey, JSON.stringify(themeSettings));
+        return new Response(null, { status: 204 });
+      }
+      return json({ message: "unauthorized" }, { status: 401 });
     }
     if (url.pathname === "/api/nodes") {
       return json({ nodes: buildNodes(), admin: adminMode });

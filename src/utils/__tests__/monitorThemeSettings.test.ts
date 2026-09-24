@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getPublic, saveThemeSettings } from "@/services/api";
+import {
+  clearLegacyThemeSettings,
+  getPublic,
+  readLegacyThemeSettings,
+} from "@/services/api";
 
 const values = new Map<string, string>();
 const storage = {
@@ -16,59 +20,33 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("monitor browser-local theme settings", () => {
-  it("round-trips theme preferences without a server settings endpoint", async () => {
+describe("monitor theme settings migration", () => {
+  it("uses hub configuration without letting old browser settings override it", async () => {
+    storage.setItem("monitor-theme-luminaplus:settings", JSON.stringify({ showPingChart: false }));
     vi.stubGlobal("localStorage", storage);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      authed: false,
-      site_name: "Monitor",
-      public_page: true,
-    }), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(
+      JSON.stringify(String(input) === "/api/me"
+        ? { authed: false, site_name: "Monitor", public_page: true }
+        : { showPingChart: true, backgroundImage: "/server.webp" }),
+      { status: 200 },
+    )));
 
-    await saveThemeSettings("LuminaPlus", { showPingChart: false });
     await expect(getPublic()).resolves.toMatchObject({
-      theme_settings: { showPingChart: false },
+      theme_settings: { showPingChart: true, backgroundImage: "/server.webp" },
     });
+    expect(readLegacyThemeSettings()).toEqual({ showPingChart: false });
+    clearLegacyThemeSettings();
+    expect(readLegacyThemeSettings()).toEqual({});
   });
 
-  it("uses the site default file as the base and lets this browser override it", async () => {
-    vi.stubGlobal("localStorage", storage);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes("theme-settings.json")) {
-          return new Response(
-            JSON.stringify({ backgroundImage: "/site.webp", showPingChart: true }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
-        }
-        return new Response(
-          JSON.stringify({ authed: false, site_name: "Monitor", public_page: true }),
-          { status: 200 },
-        );
-      }),
-    );
+  it("refuses malformed server configuration instead of treating it as an empty save base", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(
+      JSON.stringify(String(input) === "/api/me"
+        ? { authed: true, site_name: "Monitor", public_page: true }
+        : ["invalid"]),
+      { status: 200 },
+    )));
 
-    // 本机保存过的键覆盖站点默认值,没保存过的键沿用站点默认值。
-    await saveThemeSettings("LuminaPlus", { showPingChart: false });
-    await expect(getPublic()).resolves.toMatchObject({
-      theme_settings: { backgroundImage: "/site.webp", showPingChart: false },
-    });
-  });
-
-  it("ignores a missing or non-JSON site default file", async () => {
-    vi.stubGlobal("localStorage", storage);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) =>
-        String(input).includes("theme-settings.json")
-          // hub 对不存在的文件回落到 index.html:解析失败必须被忽略而不是报错。
-          ? new Response("<!doctype html><html></html>", { status: 200 })
-          : new Response(JSON.stringify({ authed: false, public_page: true }), { status: 200 }),
-      ),
-    );
-
-    await expect(getPublic()).resolves.toMatchObject({ theme_settings: {} });
+    await expect(getPublic()).rejects.toThrow("主题配置接口返回的内容不是 JSON 对象");
   });
 });

@@ -57,6 +57,7 @@ interface MonitorMetrics {
 interface MonitorNode {
   id: number;
   name?: string;
+  group?: string;
   sort?: number;
   public?: boolean;
   online?: boolean;
@@ -233,7 +234,8 @@ async function loadMonitorNodes(options?: ApiCallOptions, allowFreshCache = true
   return cachedNodes;
 }
 
-function readThemeSettings(): Record<string, unknown> {
+/** 旧版本保存在浏览器里的设置，只用于站长手动迁移到 hub。 */
+export function readLegacyThemeSettings(): Record<string, unknown> {
   if (typeof localStorage === "undefined") return {};
   try {
     const value = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
@@ -245,46 +247,21 @@ function readThemeSettings(): Record<string, unknown> {
   }
 }
 
-/**
- * 站点级默认配置所在的同源静态文件。
- *
- * monitor 的主题契约里没有主题设置存储接口(见 monitor-theme-default 的 README),
- * 所以「一次设置、所有设备与访客都生效」只能靠主题目录里的这个文件:
- *
- *     <themes-dir>/LuminaPlus/theme-settings.json
- *
- * 它由 hub 当普通静态文件下发(与 theme.json 同一个目录),每次读取公开配置时请求一次
- * (hub 对非 assets 路径返回 ETag + no-cache,重复请求只是 304)。存在时它是所有访客的默认值,
- * 本浏览器保存过的设置优先覆盖它。文件不存在时 hub 会回落到 index.html,解析失败即视为未提供。
- */
-const SITE_SETTINGS_PATH = "/theme-settings.json";
-const SITE_SETTINGS_MAX_BYTES = 256 * 1024;
+const THEME_CONFIG_PATH = `/api/themes/${encodeURIComponent(THEME_SHORT)}/config`;
 
-export async function loadSiteThemeSettings(): Promise<Record<string, unknown>> {
-  try {
-    const response = await fetchWithTimeout(
-      SITE_SETTINGS_PATH,
-      { credentials: "same-origin", headers: { Accept: "application/json" } },
-      DEFAULT_API_TIMEOUT_MS,
-    );
-    if (!response.ok) return {};
-    const text = await response.text();
-    if (text.length > SITE_SETTINGS_MAX_BYTES) return {};
-    const parsed: unknown = JSON.parse(text);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    // 文件缺失、被 WAF 拦成 HTML、离线:一律按「没有站点默认配置」处理,继续用本机设置。
-    return {};
+export async function loadThemeSettings(options?: ApiCallOptions): Promise<Record<string, unknown>> {
+  const settings = await requestJson<unknown>(THEME_CONFIG_PATH, options);
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    throw new Error("主题配置接口返回的内容不是 JSON 对象");
   }
+  return settings as Record<string, unknown>;
 }
 
 export function monitorNodeToInfo(node: MonitorNode): NodeInfo {
   return {
     uuid: String(node.id),
     name: string(node.name),
-    group: "",
+    group: string(node.group),
     region: string(node.country).toUpperCase(),
     hidden: node.public === false,
     cpu_name: string(node.cpu_name),
@@ -461,9 +438,9 @@ export async function getMe(options?: ApiCallOptions): Promise<Me> {
 }
 
 export async function getPublic(options?: ApiCallOptions): Promise<PublicConfig> {
-  const [me, siteSettings] = await Promise.all([
+  const [me, themeSettings] = await Promise.all([
     requestJson<MonitorMe>("/api/me", options),
-    loadSiteThemeSettings(),
+    loadThemeSettings(options),
   ]);
   return {
     sitename: string(me.site_name) || "Monitor",
@@ -479,8 +456,7 @@ export async function getPublic(options?: ApiCallOptions): Promise<PublicConfig>
     metric_retention_days: 7,
     custom_head: "",
     custom_body: "",
-    // 本机保存的设置优先于站点默认文件,让站长在任意设备上的临时调整仍然生效。
-    theme_settings: { ...siteSettings, ...readThemeSettings() },
+    theme_settings: themeSettings,
   };
 }
 
@@ -692,15 +668,24 @@ export async function getAdminPingTasks(options?: ApiCallOptions): Promise<PingT
 }
 
 export async function saveThemeSettings(
-  _theme: string,
+  theme: string,
   settings: Record<string, unknown>,
 ): Promise<void> {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  const path = `/api/themes/${encodeURIComponent(theme)}/config`;
+  const response = await fetchWithTimeout(path, {
+    method: "PUT",
+    credentials: "include",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  }, DEFAULT_API_TIMEOUT_MS);
+  if (!response.ok) {
+    const detail = (await response.text()).trim();
+    throw new ApiRequestError(detail || `Request failed: ${response.status}`, response.status, path);
+  }
 }
 
-/** 丢弃本浏览器保存的主题设置,让站点默认文件(若存在)重新生效。 */
-export function clearThemeSettings(): void {
+/** 迁移成功后清理旧版浏览器配置。 */
+export function clearLegacyThemeSettings(): void {
   if (typeof localStorage === "undefined") return;
   try {
     localStorage.removeItem(SETTINGS_KEY);
