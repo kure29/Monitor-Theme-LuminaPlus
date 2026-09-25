@@ -63,8 +63,8 @@ export function useNodeCardModel(
   const realPing = useNodePingOverview(uuid, !multiPingActive);
   const realPingLines = useNodePingOverviewLines(uuid, multiPingActive);
   const hasRealHomepagePingBinding = useMemo(
-    () => multiPingActive || realPing.isAssigned,
-    [multiPingActive, realPing.isAssigned],
+    () => multiPingActive || realPing.isAssigned || realPing.loadState === "error",
+    [multiPingActive, realPing.isAssigned, realPing.loadState],
   );
   const now = useHourlyClock();
   const ping = useFakePingFallback(

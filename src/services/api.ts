@@ -118,6 +118,9 @@ interface PingOverviewResponse {
   records: PingRecord[];
   tasks: PingTask[];
   taskAssignmentsKnown?: boolean;
+  /** 请求失败的节点不参与任务分配判断，首页保留它们上次成功的结果。 */
+  failedEntityIds?: string[];
+  successfulEntityIds?: string[];
   rangeStartMs?: number;
   rangeEndMs?: number;
   intervalSeconds?: number;
@@ -369,11 +372,17 @@ function sleep(ms: number, signal?: AbortSignal) {
 /**
  * 同一节点、同一窗口、同一序列的请求合并成一次。
  *
- * 首页多线路模式会按任务各查一次同一个节点,而 `/api/nodes/{id}/metrics` 的响应里本来就带着
- * 该节点全部分配任务的记录:不去重时多个任务会返回多份完全相同的响应,增加流量,也把
- * hub 的 4 个历史查询槽位撞满,表现为卡片时不时"加载失败"。
+ * 首页与详情页可能同时读取同一节点的历史；共用底层请求，但每位调用者独立取消。
+ * 仅在所有调用者都取消后才中止网络请求，避免一个视图卸载影响另一个视图。
  */
-const historyRequests = new Map<string, Promise<MonitorHistory>>();
+interface SharedHistoryRequest {
+  promise: Promise<MonitorHistory>;
+  controller: AbortController;
+  consumers: number;
+  settled: boolean;
+}
+
+const historyRequests = new Map<string, SharedHistoryRequest>();
 
 function getHistory(
   uuid: string,
@@ -381,15 +390,55 @@ function getHistory(
   series: "metrics" | "ping",
   options?: ApiCallOptions,
 ): Promise<MonitorHistory> {
-  const key = `${uuid}\u0000${Math.max(1, Math.ceil(hours))}\u0000${series}`;
-  const pending = historyRequests.get(key);
-  if (pending) return pending;
+  const signal = options?.signal;
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  }
+  const key = `${uuid}\u0000${Math.max(1, Math.ceil(hours))}\u0000${series}\u0000${options?.timeout ?? DEFAULT_API_TIMEOUT_MS}`;
+  let shared = historyRequests.get(key);
+  if (!shared) {
+    const controller = new AbortController();
+    shared = {
+      promise: requestHistory(uuid, hours, series, { ...options, signal: controller.signal }),
+      controller,
+      consumers: 0,
+      settled: false,
+    };
+    const created = shared;
+    const clear = () => {
+      created.settled = true;
+      if (historyRequests.get(key) === created) historyRequests.delete(key);
+    };
+    void created.promise.then(clear, clear);
+    historyRequests.set(key, created);
+  }
 
-  const request = requestHistory(uuid, hours, series, options).finally(() => {
-    if (historyRequests.get(key) === request) historyRequests.delete(key);
+  return new Promise<MonitorHistory>((resolve, reject) => {
+    const request = shared!;
+    request.consumers += 1;
+    let done = false;
+    const finish = () => {
+      if (done) return false;
+      done = true;
+      signal?.removeEventListener("abort", onAbort);
+      request.consumers -= 1;
+      return true;
+    };
+    const onAbort = () => {
+      if (!finish()) return;
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      if (request.consumers === 0 && !request.settled) {
+        if (historyRequests.get(key) === request) historyRequests.delete(key);
+        request.controller.abort();
+      }
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    request.promise.then(
+      (value) => { if (finish()) resolve(value); },
+      (error) => { if (finish()) reject(error); },
+    );
+    if (signal?.aborted) onAbort();
   });
-  historyRequests.set(key, request);
-  return request;
 }
 
 function range(hours: number) {
@@ -524,11 +573,18 @@ export interface TodayTrafficMetricResponse {
   intervalSeconds?: number;
 }
 
-async function mapBatches<T, R>(items: T[], size: number, mapper: (item: T) => Promise<R>) {
+async function mapBatches<T, R>(
+  items: T[],
+  size: number,
+  mapper: (item: T) => Promise<R>,
+  signal?: AbortSignal,
+) {
   const output: PromiseSettledResult<R>[] = [];
   for (let index = 0; index < items.length; index += size) {
+    if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
     output.push(...(await Promise.allSettled(items.slice(index, index + size).map(mapper))));
   }
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
   return output;
 }
 
@@ -687,11 +743,14 @@ export async function getPingOverview(
   const entityIds = options?.entityIds?.length
     ? options.entityIds
     : (await loadMonitorNodes({ signal: options?.signal }, true)).map((node) => String(node.id));
-  const responses = await mapBatches(entityIds, 4, (uuid) =>
-    getPingRecords(uuid, hours, { signal: options?.signal }),
+  const responses = await mapBatches(
+    entityIds,
+    4,
+    (uuid) => getPingRecords(uuid, hours, { signal: options?.signal }),
+    options?.signal,
   );
-  const failed = responses.find((result) => result.status === "rejected");
-  if (failed?.status === "rejected") throw failed.reason;
+  const failedEntityIds = entityIds.filter((_, index) => responses[index]?.status === "rejected");
+  const successfulEntityIds = entityIds.filter((_, index) => responses[index]?.status === "fulfilled");
   const records: PingRecord[] = [];
   const tasks = new Map<number, PingTask>();
   const clientWindowLoss: Record<string, Record<number, number>> = {};
@@ -719,6 +778,8 @@ export async function getPingOverview(
     records,
     tasks: [...tasks.values()],
     taskAssignmentsKnown: true,
+    failedEntityIds,
+    successfulEntityIds,
     clientWindowLoss,
     ...range(hours),
   };

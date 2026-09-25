@@ -6,10 +6,7 @@ import {
   orderHomepagePingTaskIds,
   resolveVisibleHomepagePingTaskIds,
   invertHomepagePingTaskBindings,
-  hasHomepagePingTaskBinding,
   normalizeHomepagePingTaskBindings,
-  resolveHomepagePingSelections,
-  resolveHomepageMultiPingTaskIds,
 } from "@/utils/pingTasks";
 
 describe("homepage ping task bindings", () => {
@@ -55,12 +52,6 @@ describe("homepage ping task bindings", () => {
     );
   });
 
-  it("reports a binding before overview data has loaded", () => {
-    const bindings = { "8": ["node-a"], "9": ["node-b"] };
-    expect(hasHomepagePingTaskBinding("node-a", bindings)).toBe(true);
-    expect(hasHomepagePingTaskBinding("node-c", bindings)).toBe(false);
-  });
-
   it("preserves any number of unique global tasks in display order", () => {
     expect(normalizeHomepageMultiPingTaskIds(["3", 1, 3, 2, 4])).toEqual([3, 1, 2, 4]);
   });
@@ -78,16 +69,6 @@ describe("homepage ping task bindings", () => {
       "node-b": [1, 2],
       "node-c": [4, 5, 6, 7],
     });
-  });
-
-  it("prefers a node override and otherwise inherits the global order", () => {
-    const overrides = { "node-a": [7, 8, 9] };
-    expect(resolveHomepageMultiPingTaskIds("node-a", [1, 2, 3], overrides)).toEqual([
-      7, 8, 9,
-    ]);
-    expect(resolveHomepageMultiPingTaskIds("node-b", [1, 2, 3], overrides)).toEqual([
-      1, 2, 3,
-    ]);
   });
 
   it("initializes an override once without replacing an existing selection", () => {
@@ -111,61 +92,4 @@ describe("homepage ping task bindings", () => {
     })).toEqual([4, 2]);
   });
 
-  it("uses multi-ping when available and falls back to each node's single binding", () => {
-    const multiSelections = resolveHomepagePingSelections(
-      ["node-a", "node-b"],
-      { "8": ["node-a"], "9": ["node-b"] },
-      [3, 1, 2],
-    );
-
-    expect(multiSelections.singleTaskIdsByClient).toEqual(new Map());
-    expect(multiSelections.multiTaskIdsByClient).toEqual(
-      new Map([
-        ["node-a", [3, 1, 2]],
-        ["node-b", [3, 1, 2]],
-      ]),
-    );
-    expect(multiSelections.requestedTaskIdsByClient).toEqual(
-      multiSelections.multiTaskIdsByClient,
-    );
-
-    const singleSelections = resolveHomepagePingSelections(
-      ["node-a", "node-b"],
-      { "8": ["node-a"], "9": ["node-b"] },
-    );
-    expect(singleSelections.singleTaskIdsByClient).toEqual(
-      new Map([
-        ["node-a", [8]],
-        ["node-b", [9]],
-      ]),
-    );
-    expect(singleSelections.multiTaskIdsByClient).toEqual(new Map());
-    expect(singleSelections.requestedTaskIdsByClient).toEqual(
-      singleSelections.singleTaskIdsByClient,
-    );
-
-    const mixedSelections = resolveHomepagePingSelections(
-      ["node-a", "node-b"],
-      { "8": ["node-a"], "9": ["node-b"] },
-      [],
-      { "node-a": [3, 1, 2] },
-    );
-    expect(mixedSelections.multiTaskIdsByClient).toEqual(
-      new Map([["node-a", [3, 1, 2]]]),
-    );
-    expect(mixedSelections.singleTaskIdsByClient).toEqual(
-      new Map([["node-b", [9]]]),
-    );
-
-    const variableSelections = resolveHomepagePingSelections(
-      ["node-a", "node-b"],
-      {},
-      [1, 2, 3, 4],
-      { "node-a": [7, 8] },
-    );
-    expect(variableSelections.multiTaskIdsByClient).toEqual(new Map([
-      ["node-a", [7, 8]],
-      ["node-b", [1, 2, 3, 4]],
-    ]));
-  });
 });

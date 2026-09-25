@@ -46,20 +46,6 @@ export function normalizeHomepageMultiPingNodeTaskIds(
   return normalized;
 }
 
-export function resolveHomepageMultiPingTaskIds(
-  clientUuid: string,
-  globalTaskIds: number[],
-  nodeTaskIds: HomepageMultiPingNodeTaskIds = {},
-): number[] {
-  const overrideTaskIds = normalizeHomepageMultiPingTaskIds(nodeTaskIds[clientUuid]);
-  if (overrideTaskIds.length > 0) {
-    return overrideTaskIds;
-  }
-
-  const normalizedGlobalTaskIds = normalizeHomepageMultiPingTaskIds(globalTaskIds);
-  return normalizedGlobalTaskIds;
-}
-
 export function createHomepageMultiPingTaskOverride(
   currentTaskIds: number[] | undefined,
   globalTaskIds: number[],
@@ -158,48 +144,4 @@ export function invertHomepagePingTaskBindings(
 
   invertedBindingsCache.set(bindings, selectedTaskByClient);
   return selectedTaskByClient;
-}
-
-export function hasHomepagePingTaskBinding(
-  clientUuid: string,
-  bindings: HomepagePingTaskBindings,
-): boolean {
-  return Boolean(clientUuid) && invertHomepagePingTaskBindings(bindings).has(clientUuid);
-}
-
-export function resolveHomepagePingSelections(
-  clientUuids: string[],
-  bindings: HomepagePingTaskBindings,
-  multiTaskIds: number[] = [],
-  nodeMultiTaskIds: HomepageMultiPingNodeTaskIds = {},
-) {
-  const singleTaskByClient = invertHomepagePingTaskBindings(bindings);
-  const singleTaskIdsByClient = new Map<string, number[]>();
-  const multiTaskIdsByClient = new Map<string, number[]>();
-
-  for (const uuid of clientUuids) {
-    if (!uuid) continue;
-    const selectedTaskIds = resolveHomepageMultiPingTaskIds(
-      uuid,
-      multiTaskIds,
-      nodeMultiTaskIds,
-    );
-    if (selectedTaskIds.length > 0) {
-      multiTaskIdsByClient.set(uuid, selectedTaskIds);
-      continue;
-    }
-    const singleTaskId = singleTaskByClient.get(uuid);
-    if (singleTaskId != null) singleTaskIdsByClient.set(uuid, [singleTaskId]);
-  }
-
-  const requestedTaskIdsByClient = new Map([
-    ...singleTaskIdsByClient,
-    ...multiTaskIdsByClient,
-  ]);
-
-  return {
-    singleTaskIdsByClient,
-    multiTaskIdsByClient,
-    requestedTaskIdsByClient,
-  };
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getPingRecords, getPingOverview } from "@/services/api";
-import { buildPingOverviewMap } from "@/hooks/usePingOverview";
+import { buildBackendPingOverviewMap } from "@/hooks/usePingOverview";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -26,6 +26,44 @@ describe("monitor history requests", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(first.records).toHaveLength(1);
     expect(second.records).toHaveLength(1);
+  });
+
+  it("lets one caller cancel without aborting another caller's shared request", async () => {
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        resolveFetch = resolve;
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = getPingRecords("17", 1, { signal: firstController.signal });
+    const second = getPingRecords("17", 1, { signal: secondController.signal });
+
+    firstController.abort();
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0]?.[1]?.signal as AbortSignal).aborted).toBe(false);
+    resolveFetch(new Response(payload, { status: 200 }));
+    await expect(second).resolves.toMatchObject({ count: 1 });
+  });
+
+  it("aborts the shared network request after its last caller cancels", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = getPingRecords("18", 1, { signal: firstController.signal });
+    const second = getPingRecords("18", 1, { signal: secondController.signal });
+    firstController.abort();
+    secondController.abort();
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    await expect(second).rejects.toMatchObject({ name: "AbortError" });
+    expect((fetchMock.mock.calls[0]?.[1]?.signal as AbortSignal).aborted).toBe(true);
   });
 
   it("retries the hub's 'too many history queries' refusal before failing", async () => {
@@ -63,14 +101,17 @@ describe("monitor history requests", () => {
     expect(result.tasks.map((task) => task.id)).toEqual([7]);
   });
 
-  it("does not report a node as unassigned when its history request failed", async () => {
+  it("reports failed nodes separately while retaining successful nodes' assignments", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
       new Response(String(input).includes("/api/nodes/8/") ? "unavailable" : payload, {
         status: String(input).includes("/api/nodes/8/") ? 500 : 200,
       }),
     ));
 
-    await expect(getPingOverview(1, 7, { entityIds: ["7", "8"] })).rejects.toThrow();
+    const result = await getPingOverview(1, 7, { entityIds: ["7", "8"] });
+    expect(result.failedEntityIds).toEqual(["8"]);
+    expect(result.successfulEntityIds).toEqual(["7"]);
+    expect(result.tasks.map((task) => task.clients)).toEqual([["7"]]);
   });
 
   it("keeps an assigned task with no history samples in the homepage overview", async () => {
@@ -87,7 +128,7 @@ describe("monitor history requests", () => {
     expect(result.records).toEqual([]);
   });
 
-  it("shows five selected lines only where their tasks are assigned", async () => {
+  it("shows all backend-assigned lines for each node", async () => {
     const ts = Math.floor(Date.now() / 1000) - 60;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const isSecondNode = String(input).includes("/api/nodes/2/");
@@ -107,19 +148,16 @@ describe("monitor history requests", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await buildPingOverviewMap(
+    const result = await buildBackendPingOverviewMap(
       1,
       ["1", "2"],
       {},
-      [1, 2, 4, 6, 7],
-      undefined,
       undefined,
       getPingOverview,
     );
 
-    expect(result.multiLines.get("1")?.map((line) => line.isAssigned)).toEqual([
-      false, false, false, false, false,
-    ]);
+    expect(result.multiLines.get("1")?.map((line) => line.taskId)).toEqual([3, 5]);
+    expect(result.multiLines.get("2")?.map((line) => line.taskId)).toEqual([1, 2, 4, 6, 7]);
     expect(result.multiLines.get("2")?.map((line) => line.lastValue)).toEqual([
       212, 289, 263, 310, 345,
     ]);

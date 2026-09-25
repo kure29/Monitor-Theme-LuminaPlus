@@ -20,8 +20,6 @@ import { withTimeoutSignal } from "@/utils/abort";
 import { resolvePingSampleCounts } from "@/utils/pingMetrics";
 import {
   invertHomepagePingTaskBindings,
-  resolveHomepagePingSelections,
-  type HomepageMultiPingNodeTaskIds,
   type HomepagePingTaskBindings,
 } from "@/utils/pingTasks";
 
@@ -49,13 +47,8 @@ export interface PingOverviewMapResult {
   intervalMs: number;
   singleItems: Map<string, PingOverviewItem>;
   multiLines: Map<string, HomepagePingLine[]>;
-  successfulTaskIds: number[];
-  failedTaskIds: number[];
-  pendingTaskIds: number[];
-  /** 后台自动模式在没有任何任务时也属于成功读取。 */
-  successfulRequest?: boolean;
-  /** 进度提交时仅包含本次被任务状态/数据更新影响的节点。 */
-  changedUuids?: string[];
+  successfulRequest: boolean;
+  failedUuids: string[];
 }
 
 export type PingOverviewLoadState = "idle" | "loading" | "ready" | "error";
@@ -287,373 +280,6 @@ function assignedEmptyPing(
   };
 }
 
-function assignedEmptyLine(
-  client: string,
-  taskId: number,
-  taskName = `任务 #${taskId}`,
-  loadState: PingOverviewTaskLoadState = "pending",
-): HomepagePingLine {
-  return {
-    taskId,
-    taskName,
-    ...assignedEmptyPing(client, loadState),
-  };
-}
-
-function mergePingOverviewStats(
-  taskId: number,
-  entityIds: string[],
-  localStats: PingTaskStats[] | undefined,
-  batchedStats: PingTaskStats[],
-) {
-  const allowedClients = new Set(entityIds);
-  const merged = new Map<string, PingTaskStats>();
-  for (const stat of localStats ?? []) {
-    if (stat.taskId === taskId && allowedClients.has(stat.client)) {
-      merged.set(stat.client, stat);
-    }
-  }
-  // 批量接口包含更完整的分位数与标准差，应覆盖 records 本地推导出的同节点统计。
-  for (const stat of batchedStats) {
-    if (stat.taskId === taskId && allowedClients.has(stat.client)) {
-      merged.set(stat.client, stat);
-    }
-  }
-  return [...merged.values()];
-}
-
-export async function buildPingOverviewMap(
-  hours: number,
-  clientUuids: string[],
-  bindings: HomepagePingTaskBindings,
-  multiTaskIds: number[],
-  signal?: AbortSignal,
-  previous?: PreviousPingOverview,
-  loadOverview: typeof getPingOverview = getPingOverview,
-  loadStats?: (
-    hours: number,
-    taskIds: number[],
-    options?: { signal?: AbortSignal; entityIds?: string[] },
-  ) => Promise<PingTaskStats[]>,
-  onProgress?: (result: PingOverviewMapResult) => void,
-  nodeMultiTaskIds: HomepageMultiPingNodeTaskIds = {},
-): Promise<PingOverviewMapResult> {
-  const normalizedUuids = normalizeVisibleUuids(clientUuids);
-  if (normalizedUuids.length === 0) {
-    return {
-      assignmentKey: "",
-      intervalMs: DEFAULT_PING_REFRESH_INTERVAL,
-      singleItems: new Map<string, PingOverviewItem>(),
-      multiLines: new Map<string, HomepagePingLine[]>(),
-      successfulTaskIds: [],
-      failedTaskIds: [],
-      pendingTaskIds: [],
-    };
-  }
-
-  const {
-    singleTaskIdsByClient,
-    multiTaskIdsByClient,
-    requestedTaskIdsByClient,
-  } = resolveHomepagePingSelections(
-    normalizedUuids,
-    bindings,
-    multiTaskIds,
-    nodeMultiTaskIds,
-  );
-  const selectedTaskIds = Array.from(
-    new Set(Array.from(requestedTaskIdsByClient.values()).flat()),
-  ).sort((left, right) => left - right);
-  const assignmentKey = [
-    `single:${buildAssignmentKey(singleTaskIdsByClient)}`,
-    `multi:${buildAssignmentKey(multiTaskIdsByClient)}`,
-  ].join("|");
-
-  if (selectedTaskIds.length === 0) {
-    return {
-      assignmentKey: "",
-      intervalMs: DEFAULT_PING_REFRESH_INTERVAL,
-      singleItems: new Map<string, PingOverviewItem>(),
-      multiLines: new Map<string, HomepagePingLine[]>(),
-      successfulTaskIds: [],
-      failedTaskIds: [],
-      pendingTaskIds: [],
-    };
-  }
-
-  type LoadedPingOverviewTask = {
-    taskId: number;
-    entityIds: string[];
-    overview: Awaited<ReturnType<typeof getPingOverview>>;
-  };
-
-  const itemsByTask = new Map<number, Map<string, PingOverviewItem>>();
-  const taskNames = new Map<number, string>();
-  const assignedClientsByTask = new Map<number, Set<string>>();
-  const successfulTaskIds = new Set<number>();
-  const failedTaskIds = new Set<number>();
-  const taskStates = new Map<number, PingOverviewTaskLoadState>(
-    selectedTaskIds.map((taskId) => [taskId, "pending"]),
-  );
-  const refreshIntervals = new Map<number, number>();
-  const loadedByTask = new Map<number, LoadedPingOverviewTask>();
-  let batchedStats: PingTaskStats[] = [];
-
-  // 结果 Map 只初始化一次。后续任务完成时通过反向索引更新受影响的节点，
-  // 避免每个任务都重新遍历全部节点并重建占位对象。
-  const singleItems = new Map<string, PingOverviewItem>();
-  const multiLines = new Map<string, HomepagePingLine[]>();
-  const singleUuidsByTask = new Map<number, string[]>();
-  const multiUuidsByTask = new Map<number, string[]>();
-  const changedUuids = new Set<string>();
-  const hasPrevious = previous?.assignmentKey === assignmentKey;
-
-  const addTaskUuid = (index: Map<number, string[]>, taskId: number, uuid: string) => {
-    const uuids = index.get(taskId);
-    if (uuids) uuids.push(uuid);
-    else index.set(taskId, [uuid]);
-  };
-
-  for (const [uuid, taskIds] of singleTaskIdsByClient) {
-    const taskId = taskIds[0];
-    if (taskId == null) continue;
-    addTaskUuid(singleUuidsByTask, taskId, uuid);
-    const previousItem = hasPrevious ? previous?.singleItems.get(uuid) : undefined;
-    const taskState = taskStates.get(taskId) ?? "pending";
-    const displayState = taskState === "pending" && previousItem
-      ? (previousItem.loadState ?? "ready")
-      : taskState;
-    singleItems.set(
-      uuid,
-      previousItem ? { ...previousItem, loadState: displayState } : assignedEmptyPing(uuid, displayState),
-    );
-    changedUuids.add(uuid);
-  }
-
-  for (const [uuid, taskIds] of multiTaskIdsByClient) {
-    const previousLines = hasPrevious ? previous?.multiLines.get(uuid) : undefined;
-    const lines = taskIds.map((taskId) => {
-      addTaskUuid(multiUuidsByTask, taskId, uuid);
-      const previousLine = previousLines?.find((line) => line.taskId === taskId);
-      const taskState = taskStates.get(taskId) ?? "pending";
-      const displayState = taskState === "pending" && previousLine
-        ? (previousLine.loadState ?? "ready")
-        : taskState;
-      return previousLine
-        ? { ...previousLine, loadState: displayState }
-        : assignedEmptyLine(uuid, taskId, undefined, displayState);
-    });
-    multiLines.set(uuid, lines);
-    changedUuids.add(uuid);
-  }
-
-  const resolveLoadedItem = (uuid: string, taskId: number) => {
-    const assignedClients = assignedClientsByTask.get(taskId);
-    if (assignedClients && !assignedClients.has(uuid)) {
-      return {
-        ...assignedEmptyPing(uuid, "ready"),
-        isAssigned: false,
-      };
-    }
-    return itemsByTask.get(taskId)?.get(uuid) ?? assignedEmptyPing(uuid, "ready");
-  };
-
-  const updateSingleItem = (uuid: string, taskId: number) => {
-    const current = singleItems.get(uuid);
-    if (!current) return;
-    const taskState = taskStates.get(taskId) ?? "pending";
-    const displayState = taskState === "pending" ? (current.loadState ?? "ready") : taskState;
-    const next = successfulTaskIds.has(taskId)
-      ? {
-          ...resolveLoadedItem(uuid, taskId),
-          loadState: "ready" as const,
-        }
-      : { ...current, loadState: displayState };
-    if (!equalPingItem(current, next)) {
-      singleItems.set(uuid, next);
-      changedUuids.add(uuid);
-    }
-  };
-
-  const updateMultiLine = (uuid: string, taskId: number) => {
-    const taskIds = multiTaskIdsByClient.get(uuid);
-    const lines = multiLines.get(uuid);
-    if (!taskIds || !lines) return;
-    const index = taskIds.indexOf(taskId);
-    if (index < 0) return;
-    const current = lines[index];
-    if (!current) return;
-    const taskState = taskStates.get(taskId) ?? "pending";
-    const displayState = taskState === "pending" ? (current.loadState ?? "ready") : taskState;
-    const next = successfulTaskIds.has(taskId)
-      ? {
-          taskId,
-          taskName: taskNames.get(taskId) ?? current.taskName ?? `任务 #${taskId}`,
-          ...resolveLoadedItem(uuid, taskId),
-          loadState: "ready" as const,
-        }
-      : { ...current, loadState: displayState };
-    if (equalPingLine(current, next)) return;
-    const nextLines = [...lines];
-    nextLines[index] = next;
-    multiLines.set(uuid, nextLines);
-    changedUuids.add(uuid);
-  };
-
-  const updateTaskOutputs = (taskId: number) => {
-    for (const uuid of singleUuidsByTask.get(taskId) ?? []) updateSingleItem(uuid, taskId);
-    for (const uuid of multiUuidsByTask.get(taskId) ?? []) updateMultiLine(uuid, taskId);
-  };
-
-  const buildResult = (changed?: readonly string[]): PingOverviewMapResult => ({
-    assignmentKey,
-    intervalMs:
-      refreshIntervals.size > 0
-        ? Math.min(...refreshIntervals.values())
-        : DEFAULT_PING_REFRESH_INTERVAL,
-    singleItems,
-    multiLines,
-    successfulTaskIds: [...successfulTaskIds].sort((left, right) => left - right),
-    failedTaskIds: [...failedTaskIds].sort((left, right) => left - right),
-    pendingTaskIds: selectedTaskIds.filter((taskId) => taskStates.get(taskId) === "pending"),
-    changedUuids: changed ? [...changed] : undefined,
-  });
-
-  const emitProgress = () => {
-    if (!onProgress) return;
-    const touched = [...changedUuids];
-    changedUuids.clear();
-    try {
-      onProgress(buildResult(touched));
-    } catch {
-      // 进度订阅者不应改变 overview 请求的最终结果。
-    }
-  };
-
-  const applyOverview = (loaded: LoadedPingOverviewTask) => {
-    loadedByTask.set(loaded.taskId, loaded);
-    successfulTaskIds.add(loaded.taskId);
-    failedTaskIds.delete(loaded.taskId);
-    taskStates.set(loaded.taskId, "ready");
-    const {
-      taskId,
-      entityIds,
-      overview: {
-        records,
-        tasks,
-        stats,
-        intervalSeconds,
-        taskAssignmentsKnown,
-        clientWindowLoss,
-      },
-    } = loaded;
-    const effectiveStats = mergePingOverviewStats(
-      taskId,
-      entityIds,
-      stats,
-      batchedStats,
-    );
-    const task = tasks.find((item) => item.id === taskId);
-    const taskName =
-      task?.name ||
-      effectiveStats.find((stat) => stat.taskId === taskId)?.name;
-    if (taskName) taskNames.set(taskId, taskName);
-    if (taskAssignmentsKnown || task?.clients.length) {
-      assignedClientsByTask.set(taskId, new Set(task?.clients ?? []));
-    }
-    // 每个节点在本任务上的窗口丢包率(monitor 的 loss 只列出有丢包的探测)。
-    const windowLossByClient = new Map<string, number>();
-    for (const [client, perTask] of Object.entries(clientWindowLoss ?? {})) {
-      const value = perTask?.[taskId];
-      if (typeof value === "number" && Number.isFinite(value)) {
-        windowLossByClient.set(client, value);
-      }
-    }
-    itemsByTask.set(
-      taskId,
-      buildPingOverviewItems(
-        taskId,
-        records,
-        effectiveStats,
-        intervalSeconds,
-        windowLossByClient,
-      ),
-    );
-
-    const taskInterval =
-      task?.interval ??
-      effectiveStats.find((stat) => stat.taskId === taskId)?.interval;
-    refreshIntervals.set(taskId, normalizeRefreshInterval(taskInterval));
-    updateTaskOutputs(taskId);
-  };
-
-  const rebuildLoadedItems = () => {
-    for (const loaded of loadedByTask.values()) applyOverview(loaded);
-  };
-
-  const batchStatsLoader = loadStats;
-  const batchStatsRequest = batchStatsLoader
-    ? withTimeoutSignal(
-        (requestSignal) =>
-          batchStatsLoader(hours, selectedTaskIds, {
-            signal: requestSignal,
-            entityIds: normalizedUuids,
-          }),
-        PING_REQUEST_TIMEOUT_MS,
-        signal,
-      )
-        .then((stats) => {
-          batchedStats = stats;
-          rebuildLoadedItems();
-          emitProgress();
-          return stats;
-        })
-        .catch(() => [] as PingTaskStats[])
-    : Promise.resolve([] as PingTaskStats[]);
-
-  // 先提交每个任务的 pending 状态，让首帧和后续轮询都能保留固定的柱状区域；
-  // 之后每个任务完成或失败时再按任务更新状态。
-  emitProgress();
-
-  const overviewRequest = Promise.all(
-    selectedTaskIds.map(async (taskId) => {
-      try {
-        const loaded = await withTimeoutSignal(
-          async (requestSignal) => {
-            const entityIds = normalizedUuids.filter(
-              (uuid) => requestedTaskIdsByClient.get(uuid)?.includes(taskId),
-            );
-            return {
-              taskId,
-              entityIds,
-              overview: await loadOverview(hours, taskId, {
-                signal: requestSignal,
-                entityIds,
-                includeStats: batchStatsLoader == null,
-              }),
-            };
-          },
-          PING_REQUEST_TIMEOUT_MS,
-          signal,
-        );
-        applyOverview(loaded);
-        emitProgress();
-        return { status: "fulfilled" as const, value: loaded };
-      } catch (reason) {
-        failedTaskIds.add(taskId);
-        successfulTaskIds.delete(taskId);
-        taskStates.set(taskId, "error");
-        updateTaskOutputs(taskId);
-        emitProgress();
-        return { status: "rejected" as const, reason };
-      }
-    }),
-  );
-
-  await Promise.all([batchStatsRequest, overviewRequest]);
-  return buildResult();
-}
-
 /** 与详情页读取同一份节点 Ping 历史，并以 probes 的后台分配关系生成首页线路。 */
 export async function buildBackendPingOverviewMap(
   hours: number,
@@ -661,6 +287,7 @@ export async function buildBackendPingOverviewMap(
   bindings: HomepagePingTaskBindings,
   signal?: AbortSignal,
   loadOverview: typeof getPingOverview = getPingOverview,
+  previous?: PreviousPingOverview,
 ): Promise<PingOverviewMapResult> {
   const uuids = normalizeVisibleUuids(clientUuids);
   const preferredSingleTaskByClient = invertHomepagePingTaskBindings(bindings);
@@ -671,10 +298,8 @@ export async function buildBackendPingOverviewMap(
       intervalMs: DEFAULT_PING_REFRESH_INTERVAL,
       singleItems: new Map(),
       multiLines: new Map(),
-      successfulTaskIds: [],
-      failedTaskIds: [],
-      pendingTaskIds: [],
       successfulRequest: true,
+      failedUuids: [],
     };
   }
 
@@ -701,7 +326,19 @@ export async function buildBackendPingOverviewMap(
 
   const singleItems = new Map<string, PingOverviewItem>();
   const multiLines = new Map<string, HomepagePingLine[]>();
+  const failedUuids = overview.failedEntityIds?.filter((uuid) => uuids.includes(uuid)) ?? [];
+  const failedSet = new Set(failedUuids);
+  const hasPrevious = previous?.assignmentKey === assignmentKey;
   for (const uuid of uuids) {
+    if (failedSet.has(uuid)) {
+      const priorItem = hasPrevious ? previous?.singleItems.get(uuid) : undefined;
+      singleItems.set(uuid, priorItem
+        ? { ...priorItem, loadState: "error" }
+        : { client: uuid, isAssigned: false, loadState: "error", lastValue: null, samples: [], max: 1, loss: null });
+      const priorLines = hasPrevious ? previous?.multiLines.get(uuid) : undefined;
+      multiLines.set(uuid, priorLines?.map((line) => ({ ...line, loadState: "error" })) ?? []);
+      continue;
+    }
     const assignedTasks = overview.tasks
       .filter((task) => task.clients.includes(uuid))
       .sort((left, right) => left.id - right.id);
@@ -732,10 +369,8 @@ export async function buildBackendPingOverviewMap(
     intervalMs: normalizeRefreshInterval(intervalSeconds),
     singleItems,
     multiLines,
-    successfulTaskIds: overview.tasks.map((task) => task.id),
-    failedTaskIds: [],
-    pendingTaskIds: [],
-    successfulRequest: true,
+    successfulRequest: uuids.length > failedSet.size,
+    failedUuids,
   };
 }
 
@@ -916,13 +551,11 @@ function readPingOverviewCache(
 export function selectPersistablePingOverview(
   result: PingOverviewMapResult,
 ): PersistablePingOverviewData | null {
-  // 全部失败时保留旧缓存，避免把空占位写成“成功”并刷新旧数据的寿命。
-  if (!result.assignmentKey || (!result.successfulRequest && result.successfulTaskIds.length === 0)) {
+  // 任一节点失败时不刷新整份缓存的时间戳；否则旧值会被当成新鲜数据。
+  if (!result.assignmentKey || !result.successfulRequest || result.failedUuids.length > 0) {
     return null;
   }
 
-  // 失败任务可能仍在内存里显示上一轮数据，但不能把它们带回缓存；否则下一次刷新
-  // 会把失败的旧值当成新鲜数据。每个成功任务的数据独立写入同一个 assignment 缓存。
   const singleItems = Array.from(result.singleItems.entries()).filter(
     ([, item]) => item.loadState === "ready",
   );
@@ -989,30 +622,17 @@ function commitPingOverview(
   options: {
     status?: PingOverviewLoadState;
     isRefreshing?: boolean;
-    changedUuids?: readonly string[];
   } = {},
 ) {
   const touched = new Set<string>();
   const prevSingleItems = pingOverviewState.singleItems;
   const prevMultiLines = pingOverviewState.multiLines;
-  const assignmentChanged = pingOverviewState.assignmentKey !== assignmentKey;
-  const keys = options.changedUuids
-    ? new Set(options.changedUuids)
-    : new Set<string>([
-        ...prevSingleItems.keys(),
-        ...singleItems.keys(),
-        ...prevMultiLines.keys(),
-        ...multiLines.keys(),
-      ]);
-  const keysToCompare = assignmentChanged
-    ? new Set<string>([
-        ...keys,
-        ...prevSingleItems.keys(),
-        ...singleItems.keys(),
-        ...prevMultiLines.keys(),
-        ...multiLines.keys(),
-      ])
-    : keys;
+  const keysToCompare = new Set<string>([
+    ...prevSingleItems.keys(),
+    ...singleItems.keys(),
+    ...prevMultiLines.keys(),
+    ...multiLines.keys(),
+  ]);
   let nextSingleItems = prevSingleItems;
   let nextMultiLines = prevMultiLines;
   let singleCloned = false;
@@ -1140,14 +760,10 @@ async function refreshPingOverview() {
       scheduledBindings,
       signal,
       getPingOverview,
+      pingOverviewState,
     );
     if (isCurrent()) {
-      const hasRequestedTasks = next.assignmentKey.length > 0;
-      const nextStatus: PingOverviewLoadState = next.successfulRequest || !hasRequestedTasks
-        ? "ready"
-        : next.successfulTaskIds.length > 0
-          ? "ready"
-          : "error";
+      const nextStatus: PingOverviewLoadState = next.successfulRequest ? "ready" : "error";
       commitPingOverview(
         next.assignmentKey,
         next.intervalMs,
@@ -1160,7 +776,7 @@ async function refreshPingOverview() {
       );
       persistPingOverviewCache(next);
       schedulePingRefresh(
-        next.successfulRequest || next.successfulTaskIds.length > 0
+        next.successfulRequest
           ? next.intervalMs
           : DEFAULT_PING_REFRESH_INTERVAL,
       );
