@@ -3,33 +3,11 @@ import {
   DEFAULT_THEME_SETTINGS,
   canViewCosts,
   normalizeThemeSettings,
-  parseThemeSettings,
-  serializeThemeSettings,
   shouldShowAdminEntry,
 } from "@/utils/themeSettings";
 import { DEFAULT_BACKGROUND_VIDEO_URL } from "@/utils/background";
 
 describe("normalizeThemeSettings", () => {
-  it("round-trips exported settings so a config can move between devices", () => {
-    const source = normalizeThemeSettings({
-      backgroundImage: "/wide.webp|/night.webp",
-      backgroundImageMobile: "/portrait.webp",
-      desktopNodeViewMode: "mini",
-      mobileNodeViewMode: "large",
-      showConnections: true,
-      hiddenNodes: "节点A, uuid-1",
-      costPremiums: { a: { amount: 120, acquiredAt: "2026-01-01" } },
-    } as never);
-
-    expect(parseThemeSettings(serializeThemeSettings(source))).toEqual(source);
-  });
-
-  it("rejects imported text that is not a JSON object", () => {
-    expect(() => parseThemeSettings("[]")).toThrow();
-    expect(() => parseThemeSettings("\"settings\"")).toThrow();
-    expect(() => parseThemeSettings("这不是 JSON")).toThrow(SyntaxError);
-  });
-
   it("defaults to image mode with the bundled desktop video ready to enable", () => {
     const settings = normalizeThemeSettings({});
 

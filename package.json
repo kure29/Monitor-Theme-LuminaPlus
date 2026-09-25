@@ -1,7 +1,7 @@
 {
   "name": "monitor-theme-luminaplus",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "description": "LuminaPlus public status theme for monitor",
   "author": "kure29",

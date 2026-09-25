@@ -15,7 +15,6 @@ import { fetchWithTimeout } from "@/utils/abort";
 import type { TrafficMetricSeries } from "@/utils/trafficStats";
 
 const DEFAULT_API_TIMEOUT_MS = 12_000;
-const SETTINGS_KEY = "monitor-theme-luminaplus:settings";
 const DEV_MOCK_SESSION_KEY = "monitor-luminaplus:dev-mock";
 const THEME_SHORT = "LuminaPlus";
 
@@ -232,19 +231,6 @@ async function loadMonitorNodes(options?: ApiCallOptions, allowFreshCache = true
   const payload = await requestJson<{ nodes?: MonitorNode[] }>("/api/nodes", options);
   acceptSnapshot(payload);
   return cachedNodes;
-}
-
-/** 旧版本保存在浏览器里的设置，只用于站长手动迁移到 hub。 */
-export function readLegacyThemeSettings(): Record<string, unknown> {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const value = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
 }
 
 const THEME_CONFIG_PATH = `/api/themes/${encodeURIComponent(THEME_SHORT)}/config`;
@@ -686,16 +672,6 @@ export async function saveThemeSettings(
   if (!response.ok) {
     const detail = (await response.text()).trim();
     throw new ApiRequestError(detail || `Request failed: ${response.status}`, response.status, path);
-  }
-}
-
-/** 迁移成功后清理旧版浏览器配置。 */
-export function clearLegacyThemeSettings(): void {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.removeItem(SETTINGS_KEY);
-  } catch {
-    // 存储不可用时本来就没有本机设置可清。
   }
 }
 

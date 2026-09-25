@@ -21,7 +21,6 @@ import {
   Rows3,
   Save,
   Search,
-  Share2,
   SlidersHorizontal,
   Sparkles,
   Sun,
@@ -40,11 +39,9 @@ import { useHourlyClock } from "@/hooks/useClock";
 import { queryClient } from "@/services/queryClient";
 import {
   ApiRequestError,
-  clearLegacyThemeSettings,
   getAdminClients,
   getAdminPingTasks,
   getNodes,
-  readLegacyThemeSettings,
   saveThemeSettings,
 } from "@/services/api";
 import type { AdminClient, PingTask, ThemeSettings } from "@/types/models";
@@ -92,8 +89,6 @@ import {
   DEFAULT_THEME_SETTINGS,
   normalizeHomeHeaderVisibleSeconds,
   normalizeThemeSettings,
-  parseThemeSettings,
-  serializeThemeSettings,
   type AmbientEffect,
   type BackgroundMediaType,
   type ResolvedThemeSettings,
@@ -751,10 +746,6 @@ export function ThemeManage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [accessRevoked, setAccessRevoked] = useState(false);
-  // 配置迁移面板的 JSON 文本与提示;导出/导入共用同一段文本。
-  const [transferText, setTransferText] = useState("");
-  const [transferMessage, setTransferMessage] = useState<string | null>(null);
-  const [legacyThemeSettings, setLegacyThemeSettings] = useState(readLegacyThemeSettings);
   const savingDraftRef = useRef<ThemeDraft | null>(null);
   const editVersionRef = useRef(0);
 
@@ -1164,8 +1155,6 @@ export function ThemeManage() {
       };
       delete nextSettings.homepagePingTask;
       await saveThemeSettings(config.theme, nextSettings);
-      clearLegacyThemeSettings();
-      setLegacyThemeSettings({});
       await queryClient.invalidateQueries({ queryKey: ["public"] });
       if (editVersionRef.current === submittedEditVersion) {
         setMessage("主题设置已保存");
@@ -1192,55 +1181,6 @@ export function ThemeManage() {
     seedDrafts(sourceThemeSettings);
     setMessage(null);
     setError(null);
-  };
-
-  // 配置迁移:导出当前表单为 JSON,或把粘贴的 JSON 载入表单。载入只改草稿,仍需点保存,
-  // 这样导入的内容在落盘前可以先在页面上核对。
-  const handleExportSettings = () => {
-    setTransferText(
-      serializeThemeSettings(draftThemeSettings as ThemeSettings & Record<string, unknown>),
-    );
-    setTransferMessage("已生成当前表单的配置 JSON");
-  };
-
-  const handleCopySettings = async () => {
-    if (!transferText.trim()) return;
-    try {
-      await navigator.clipboard.writeText(transferText);
-      setTransferMessage("已复制到剪贴板，可留作配置备份");
-    } catch {
-      setTransferMessage("复制失败:请手动全选文本框内容复制");
-    }
-  };
-
-  const handleImportSettings = () => {
-    try {
-      const imported = parseThemeSettings(transferText);
-      editVersionRef.current += 1;
-      seedDrafts(imported);
-      setTransferMessage("已载入表单,确认无误后点右上角「保存设置」");
-    } catch (importError) {
-      setTransferMessage(
-        importError instanceof SyntaxError
-          ? "导入失败:内容不是合法的 JSON"
-          : `导入失败:${importError instanceof Error ? importError.message : "无法解析配置"}`,
-      );
-    }
-  };
-
-  const handleImportLegacySettings = () => {
-    editVersionRef.current += 1;
-    seedDrafts(normalizeThemeSettings({
-      ...(config?.theme_settings ?? {}),
-      ...legacyThemeSettings,
-    }));
-    setTransferMessage("已载入旧版浏览器配置；核对后点击「保存设置」同步到所有设备");
-  };
-
-  const handleClearLegacySettings = () => {
-    clearLegacyThemeSettings();
-    setLegacyThemeSettings({});
-    setTransferMessage("已清除旧版浏览器配置");
   };
 
   if (configLoading) {
@@ -2440,85 +2380,6 @@ export function ThemeManage() {
                 />
               );
             })}
-        </div>
-      </InstancePanel>
-
-      <InstancePanel
-        kicker={<><span className="instance-panel-kicker-num">10</span>迁移</>}
-        title="配置备份与旧版迁移"
-        description={
-          <>
-            当前配置保存在 monitor 的数据库，主题更新后仍会保留。这里可以导出 JSON 备份，
-            或把旧版配置导入表单后保存到服务器。
-          </>
-        }
-        aside={<Share2 size={16} />}
-      >
-        <div className="flex flex-col gap-3">
-          <label className="flex min-w-0 flex-col gap-2">
-            <span className="text-[12px] font-medium text-[var(--text-secondary)]">
-              配置 JSON
-            </span>
-            <textarea
-              value={transferText}
-              onChange={(event) => setTransferText(event.target.value)}
-              placeholder="点「导出当前配置」生成，或粘贴之前备份的 JSON"
-              spellCheck={false}
-              className="surface-inset min-h-[168px] w-full resize-y px-3 py-2 font-mono text-[11px] leading-relaxed outline-none"
-              aria-label="配置 JSON"
-            />
-          </label>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleExportSettings}
-              className="theme-manage-button"
-            >
-              导出当前配置
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleCopySettings()}
-              disabled={!transferText.trim()}
-              className="theme-manage-button"
-            >
-              复制
-            </button>
-            <button
-              type="button"
-              onClick={handleImportSettings}
-              disabled={!transferText.trim()}
-              className="theme-manage-button"
-            >
-              导入到表单
-            </button>
-            {Object.keys(legacyThemeSettings).length > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleImportLegacySettings}
-                  className="theme-manage-button"
-                >
-                  导入旧版浏览器配置
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearLegacySettings}
-                  className="theme-manage-button"
-                >
-                  清除旧版浏览器配置
-                </button>
-              </>
-            )}
-          </div>
-
-          <p className="text-[11px] leading-relaxed text-[var(--text-tertiary)]" role="status">
-            {Object.keys(legacyThemeSettings).length > 0
-              ? `发现旧版浏览器配置（${Object.keys(legacyThemeSettings).length} 项），导入并保存后即可迁移到 monitor。`
-              : "配置已由 monitor 统一存储；旧版浏览器配置不会覆盖服务器设置。"}
-            {transferMessage ? ` · ${transferMessage}` : ""}
-          </p>
         </div>
       </InstancePanel>
 

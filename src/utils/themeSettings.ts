@@ -344,28 +344,3 @@ export function normalizeThemeSettings(
     ambientEffect: normalizeAmbientEffect(settings?.ambientEffect),
   };
 }
-
-/**
- * 把设置序列化成可迁移的 JSON 文本。
- *
- * 在主题设置页导出/导入备份，也可用于迁移旧版 theme-settings.json。
- * 先归一化,所以导出的内容永远是完整、可再次导入的集合。
- */
-export function serializeThemeSettings(
-  settings: (ThemeSettings & Record<string, unknown>) | ResolvedThemeSettings,
-): string {
-  return JSON.stringify(
-    normalizeThemeSettings(settings as ThemeSettings & Record<string, unknown>),
-    null,
-    2,
-  );
-}
-
-/** 解析导入的配置文本;不是 JSON 对象时抛错,由调用方提示用户。 */
-export function parseThemeSettings(serialized: string): ResolvedThemeSettings {
-  const parsed: unknown = JSON.parse(serialized);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("配置内容必须是一个 JSON 对象");
-  }
-  return normalizeThemeSettings(parsed as ThemeSettings & Record<string, unknown>);
-}

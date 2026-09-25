@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  clearLegacyThemeSettings,
-  getPublic,
-  readLegacyThemeSettings,
-} from "@/services/api";
+import { getPublic } from "@/services/api";
 
 const values = new Map<string, string>();
 const storage = {
@@ -20,7 +16,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("monitor theme settings migration", () => {
+describe("monitor theme settings", () => {
   it("uses hub configuration without letting old browser settings override it", async () => {
     storage.setItem("monitor-theme-luminaplus:settings", JSON.stringify({ showPingChart: false }));
     vi.stubGlobal("localStorage", storage);
@@ -34,9 +30,9 @@ describe("monitor theme settings migration", () => {
     await expect(getPublic()).resolves.toMatchObject({
       theme_settings: { showPingChart: true, backgroundImage: "/server.webp" },
     });
-    expect(readLegacyThemeSettings()).toEqual({ showPingChart: false });
-    clearLegacyThemeSettings();
-    expect(readLegacyThemeSettings()).toEqual({});
+    expect(storage.getItem("monitor-theme-luminaplus:settings")).toBe(
+      JSON.stringify({ showPingChart: false }),
+    );
   });
 
   it("refuses malformed server configuration instead of treating it as an empty save base", async () => {
