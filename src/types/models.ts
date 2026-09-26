@@ -188,6 +188,7 @@ export const PublicConfigSchema = z
     custom_head: z.string().default(""),
     custom_body: z.string().default(""),
     theme_settings: z.record(z.string(), z.unknown()).default({}),
+    theme_settings_error: z.string().optional(),
   })
   .passthrough();
 

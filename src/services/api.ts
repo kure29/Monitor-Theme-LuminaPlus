@@ -246,6 +246,20 @@ export async function loadThemeSettings(options?: ApiCallOptions): Promise<Recor
   return settings as Record<string, unknown>;
 }
 
+function describeThemeSettingsReadError(error: unknown) {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 404 || error.status === 405) {
+      return `monitor 未提供主题配置接口（HTTP ${error.status}），请升级 monitor`;
+    }
+    return `主题配置接口返回 HTTP ${error.status}`;
+  }
+  if (error instanceof SyntaxError) return "主题配置接口返回了无效数据，请检查 monitor 版本或反向代理";
+  if (error instanceof Error && error.message === "主题配置接口返回的内容不是 JSON 对象") {
+    return error.message;
+  }
+  return "主题配置接口暂时无法读取";
+}
+
 export function monitorNodeToInfo(node: MonitorNode): NodeInfo {
   return {
     uuid: String(node.id),
@@ -473,10 +487,21 @@ export async function getMe(options?: ApiCallOptions): Promise<Me> {
 }
 
 export async function getPublic(options?: ApiCallOptions): Promise<PublicConfig> {
-  const [me, themeSettings] = await Promise.all([
-    requestJson<MonitorMe>("/api/me", options),
-    loadThemeSettings(options),
-  ]);
+  const me = await requestJson<MonitorMe>("/api/me", options);
+  // monitor 在私有站点会拒绝匿名读取主题配置。先返回站点的私有状态，
+  // 让访客看到登录入口；登录后仍需正常读取服务端配置。
+  const privateVisitor = me.public_page === false && me.authed !== true;
+  let themeSettings: Record<string, unknown> = {};
+  let themeSettingsError: string | undefined;
+  if (!privateVisitor) {
+    try {
+      themeSettings = await loadThemeSettings(options);
+    } catch (error) {
+      if (options?.signal?.aborted) throw error;
+      // 主题配置故障不能使公开首页整体不可用；设置页会用此错误阻止覆盖旧配置。
+      themeSettingsError = describeThemeSettingsReadError(error);
+    }
+  }
   return {
     sitename: string(me.site_name) || "Monitor",
     description: "服务器运行状态",
@@ -492,6 +517,7 @@ export async function getPublic(options?: ApiCallOptions): Promise<PublicConfig>
     custom_head: "",
     custom_body: "",
     theme_settings: themeSettings,
+    theme_settings_error: themeSettingsError,
   };
 }
 

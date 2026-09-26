@@ -9,6 +9,7 @@ import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useSiteMetadata } from "@/hooks/useSiteMetadata";
 import { useMetricColorsSync } from "@/hooks/useMetricColors";
 import { useNodeStoreStatus } from "@/hooks/useNode";
+import { ApiRequestError } from "@/services/api";
 import { PwaPullToRefresh } from "./PwaPullToRefresh";
 
 export function AppShell() {
@@ -55,7 +56,7 @@ export function AppShell() {
               <Spinner size={24} />
             </div>
           ) : accessError ? (
-            <AccessError onRetry={() => void publicConfig.refetch()} />
+            <AccessError error={publicConfig.error} onRetry={() => void publicConfig.refetch()} />
           ) : isPrivateVisitor ? (
             <PrivateSiteGate />
           ) : (
@@ -67,14 +68,24 @@ export function AppShell() {
   );
 }
 
-function AccessError({ onRetry }: { onRetry: () => void }) {
+function siteConfigErrorMessage(error: unknown) {
+  if (error instanceof ApiRequestError) {
+    return `站点接口返回 HTTP ${error.status}，请检查 monitor 服务后重试。`;
+  }
+  if (error instanceof SyntaxError) {
+    return "站点接口未返回有效的配置数据，请检查 monitor 版本或反向代理。";
+  }
+  return "站点接口暂时无法连接，请检查网络后重试。";
+}
+
+function AccessError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center">
       <div className="space-y-2">
         <div className="text-[15px] font-semibold text-[var(--text-primary)]">
           无法读取站点配置
         </div>
-        <p className="text-[13px] text-[var(--text-secondary)]">请检查网络后重试。</p>
+        <p className="text-[13px] text-[var(--text-secondary)]">{siteConfigErrorMessage(error)}</p>
       </div>
       <button type="button" onClick={onRetry} className="control-button px-4 py-2 text-[13px] font-medium">
         重试

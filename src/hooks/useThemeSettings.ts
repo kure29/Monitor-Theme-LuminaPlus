@@ -35,8 +35,8 @@ export function useThemeSettings(): ThemeSettingsState {
       ...getCachedResolvedThemeSettings(config?.theme_settings),
       isReady,
       isLoading: isLoading && !hasConfig,
-      isError,
+      isError: isError || Boolean(config?.theme_settings_error),
     }),
-    [config?.theme_settings, hasConfig, isError, isLoading, isReady],
+    [config?.theme_settings, config?.theme_settings_error, hasConfig, isError, isLoading, isReady],
   );
 }

@@ -34,6 +34,8 @@ LuminaPlus 是为 [monitor](https://github.com/monitor-probe/monitor) 移植的�
 新版 monitor 提供 `GET/PUT /api/themes/LuminaPlus/config`。站长登录后在主题设置页保存，
 配置写入 hub 数据库；所有设备和访客读取同一份配置，更新或重装主题不会清除它。
 `PUT` 需要已安装 LuminaPlus 且保持登录。保存失败会在设置页显示接口错误，不会假报成功。
+主题配置暂时无法读取时，公开页面会先用默认外观展示并每 30 秒重试；设置页会阻止保存，
+避免把未知的旧配置覆盖掉。私有站点的匿名访客会直接看到登录入口。
 
 旧版浏览器 `localStorage` 和手工放置的 `theme-settings.json` 不再作为配置来源，也不会覆盖
 monitor 数据库中的设置。主题设置页不再提供旧版配置迁移入口。

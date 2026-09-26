@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getPublic } from "@/services/api";
+import { getPublic, loadThemeSettings } from "@/services/api";
 
 const values = new Map<string, string>();
 const storage = {
@@ -35,7 +35,7 @@ describe("monitor theme settings", () => {
     );
   });
 
-  it("refuses malformed server configuration instead of treating it as an empty save base", async () => {
+  it("keeps the homepage available while refusing malformed settings as a save base", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(
       JSON.stringify(String(input) === "/api/me"
         ? { authed: true, site_name: "Monitor", public_page: true }
@@ -43,6 +43,37 @@ describe("monitor theme settings", () => {
       { status: 200 },
     )));
 
-    await expect(getPublic()).rejects.toThrow("主题配置接口返回的内容不是 JSON 对象");
+    await expect(getPublic()).resolves.toMatchObject({
+      theme_settings: {},
+      theme_settings_error: "主题配置接口返回的内容不是 JSON 对象",
+    });
+    await expect(loadThemeSettings()).rejects.toThrow("主题配置接口返回的内容不是 JSON 对象");
+  });
+
+  it("keeps site metadata when the theme config endpoint is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/me"
+        ? new Response(JSON.stringify({ authed: false, site_name: "Fleet", public_page: true }))
+        : new Response("unavailable", { status: 503 }),
+    ));
+
+    await expect(getPublic()).resolves.toMatchObject({
+      sitename: "Fleet",
+      private_site: false,
+      theme_settings: {},
+      theme_settings_error: "主题配置接口返回 HTTP 503",
+    });
+  });
+
+  it("explains when the hub lacks the theme config endpoint", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/me"
+        ? new Response(JSON.stringify({ authed: false, public_page: true }))
+        : new Response("not found", { status: 404 }),
+    ));
+
+    await expect(getPublic()).resolves.toMatchObject({
+      theme_settings_error: "monitor 未提供主题配置接口（HTTP 404），请升级 monitor",
+    });
   });
 });

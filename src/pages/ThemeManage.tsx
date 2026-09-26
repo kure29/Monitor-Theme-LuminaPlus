@@ -1137,6 +1137,7 @@ export function ThemeManage() {
   const handleSave = async (): Promise<boolean> => {
     if (
       !config?.theme ||
+      config.theme_settings_error ||
       savingDraftRef.current ||
       draftCostRateApiUrlInvalid ||
       videoInputInvalid
@@ -1191,7 +1192,7 @@ export function ThemeManage() {
     );
   }
 
-  if (!config) {
+  if (!config || config.theme_settings_error) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center">
         <div role="alert" className="space-y-2">
@@ -1199,7 +1200,7 @@ export function ThemeManage() {
             无法读取主题配置
           </div>
           <p className="max-w-[32rem] text-[13px] text-[var(--text-secondary)]">
-            {configError instanceof Error ? configError.message : "请稍后重试。"}
+            {config?.theme_settings_error ?? (configError instanceof Error ? configError.message : "请稍后重试。")}
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-center gap-2">
