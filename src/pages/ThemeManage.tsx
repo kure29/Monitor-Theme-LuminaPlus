@@ -2332,7 +2332,7 @@ export function ThemeManage() {
           <ToggleRow
             field="fakePingForUnbound"
             title="后台未分配任务时显示模拟延迟"
-            desc="用户主动开启后，后台未分配 Ping 任务的在线节点会显示前端生成的模拟数据（延迟 1-10ms、丢包 0%）。多线路模式中不会生成模拟线路。模拟数值会带「模拟」标记，不代表真实网络质量。"
+            desc="开启后，后台未分配 Ping 任务的在线节点会显示前端生成的模拟数据（延迟 1-10ms、丢包 0%）；多线路模式下显示一条模拟线路。已有真实任务、离线或读取失败的节点不会模拟。模拟数值会带「模拟」标记，不代表真实网络质量。"
             checked={draft.fakePingForUnbound}
             onPatch={patch}
           />

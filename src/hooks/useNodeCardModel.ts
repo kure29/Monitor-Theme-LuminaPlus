@@ -9,7 +9,11 @@ import {
   usePingBuckets,
 } from "@/hooks/usePingOverview";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
-import type { HomepagePingDisplayLine } from "@/types/models";
+import type {
+  HomepagePingDisplayLine,
+  HomepagePingLine,
+  PingOverviewItem,
+} from "@/types/models";
 import { formatRenewalPrice } from "@/utils/billing";
 import { getExpireTextColor } from "@/utils/expireStatus";
 import { getTrafficResetDisplay } from "@/utils/trafficReset";
@@ -30,6 +34,7 @@ import { resolveTrafficUsage, trafficTypeLabel, type TrafficDisplay } from "@/ut
 import { resolveOsInfo } from "@/components/ui/OsLogo";
 import {
   resolveVisibleHomepagePingTaskIds,
+  type HomepageMultiPingNodeTaskIds,
 } from "@/utils/pingTasks";
 
 interface NodeCardModelOptions {
@@ -42,6 +47,41 @@ export function shouldRenderHomepagePingBars(
   pingIsAssigned: boolean,
 ) {
   return hasRealHomepagePingBinding || pingIsAssigned;
+}
+
+export function buildHomepagePingDisplayLines(
+  uuid: string,
+  realLines: HomepagePingLine[],
+  fallbackPing: PingOverviewItem,
+  preferredTaskIds: number[],
+  nodeTaskIds: HomepageMultiPingNodeTaskIds,
+  bucketCount: number | undefined,
+  now: number,
+): HomepagePingDisplayLine[] {
+  const visibleTaskIds = resolveVisibleHomepagePingTaskIds(
+    uuid,
+    realLines.map((line) => line.taskId),
+    preferredTaskIds,
+    nodeTaskIds,
+  );
+  const visibleLines = visibleTaskIds.flatMap((taskId) => {
+    const line = realLines.find((item) => item.taskId === taskId);
+    if (
+      !line ||
+      line.isAssigned === false ||
+      (line.loadState === "pending" && line.lastValue == null && line.loss == null)
+    ) return [];
+    return [{ ...line, buckets: buildPingBuckets(line, bucketCount, now) }];
+  });
+  if (visibleLines.length > 0 || realLines.length > 0 || fallbackPing.simulated !== true) {
+    return visibleLines;
+  }
+  return [{
+    taskId: 0,
+    taskName: "延迟",
+    ...fallbackPing,
+    buckets: buildPingBuckets(fallbackPing, bucketCount, now),
+  }];
 }
 
 export function useNodeCardModel(
@@ -60,7 +100,7 @@ export function useNodeCardModel(
     homepageMultiPingNodeTaskIds,
   } = useThemeSettings();
   const multiPingActive = includeMultiPing && enableHomepageMultiPing;
-  const realPing = useNodePingOverview(uuid, !multiPingActive);
+  const realPing = useNodePingOverview(uuid, !multiPingActive || fakePingForUnbound);
   const realPingLines = useNodePingOverviewLines(uuid, multiPingActive);
   const hasRealHomepagePingBinding = useMemo(
     () => multiPingActive || realPing.isAssigned || realPing.loadState === "error",
@@ -71,7 +111,7 @@ export function useNodeCardModel(
     uuid,
     realPing,
     metrics?.online === true,
-    fakePingForUnbound && !multiPingActive,
+    fakePingForUnbound,
   );
   // 状态跟随每条任务数据进入 Store,不再订阅全局 isRefreshing。这样后台轮询开始/结束
   // 时不会让所有节点卡片仅因一个布尔值变化而重渲染。
@@ -96,30 +136,21 @@ export function useNodeCardModel(
     ) {
       return [];
     }
-    const visibleTaskIds = resolveVisibleHomepagePingTaskIds(
+    return buildHomepagePingDisplayLines(
       uuid,
-      realPingLines.map((line) => line.taskId),
+      realPingLines,
+      ping,
       homepageMultiPingTaskIds,
       homepageMultiPingNodeTaskIds,
+      pingBucketCount,
+      bucketNow,
     );
-    return visibleTaskIds.flatMap((taskId) => {
-      const loaded = realPingLines.find((line) => line.taskId === taskId);
-      if (!loaded) return [];
-      const sourceLine = loaded;
-      if (
-        sourceLine.isAssigned === false ||
-        (sourceLine.loadState === "pending" && sourceLine.lastValue == null && sourceLine.loss == null)
-      ) return [];
-      return [{
-        ...sourceLine,
-        buckets: buildPingBuckets(sourceLine, pingBucketCount, bucketNow),
-      }];
-    });
   }, [
     bucketNow,
     homepageMultiPingNodeTaskIds,
     homepageMultiPingTaskIds,
     multiPingActive,
+    ping,
     pingBucketCount,
     realPingLines,
     uuid,
