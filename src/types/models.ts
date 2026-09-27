@@ -121,6 +121,7 @@ export interface ThemeSettings {
   homepageMultiPingTaskIds?: number[];
   homepageMultiPingNodeTaskIds?: Record<string, number[]>;
   fakePingForUnbound?: boolean;
+  fakePingLineCount?: "auto" | number;
   enableHomeHeaderAutoHide?: boolean;
   homeHeaderVisibleSeconds?: number;
   showHomeOverview?: boolean;

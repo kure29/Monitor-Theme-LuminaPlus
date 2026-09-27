@@ -53,8 +53,8 @@ function smoothUnitAt(seed: number, slot: number) {
  * 生成后台未分配节点的模拟 PingOverviewItem。`minuteIndex` 是绝对分钟槽 Math.floor(now / 60000):
  * 每个点由 (uuid, 分钟槽) 唯一确定,分钟推进时序列前移一格、只新增最新点,与真实滚动窗口一致。
  */
-export function buildFakePingItem(uuid: string, minuteIndex: number): PingOverviewItem {
-  const seed = hashUuid(uuid);
+export function buildFakePingItem(uuid: string, minuteIndex: number, lineIndex = 0): PingOverviewItem {
+  const seed = hashUuid(lineIndex === 0 ? uuid : `${uuid}:simulated:${lineIndex}`);
   // 基线只由 seed 决定,落在 [3,8];叠加浮动后 ∈ [3,9] ⊂ [1,10]。样本存浮点,显示端 Math.round。
   const base = FAKE_BASE_MIN_MS + unitAt(seed, 0x9e3779b1) * FAKE_BASE_SPAN_MS;
   const samples = new Array<{ time: number; value: number }>(FAKE_SAMPLE_COUNT);

@@ -3,12 +3,35 @@ import {
   buildBackendPingOverviewMap,
   buildPingBuckets,
   buildPingOverviewItems,
+  countVisibleHomepagePingLines,
   selectPersistablePingOverview,
 } from "@/hooks/usePingOverview";
+import type { HomepagePingLine } from "@/types/models";
 
 const MINUTE_MS = 60_000;
 const NOW = Date.UTC(2026, 6, 17, 11, 2);
 const WINDOW_START = NOW - 60 * MINUTE_MS;
+
+describe("auto simulated line count", () => {
+  it("matches the largest displayed real group after per-node filters and hidden nodes", () => {
+    const line = (taskId: number, client: string): HomepagePingLine => ({
+      taskId, taskName: `Task ${taskId}`, client, isAssigned: true,
+      loadState: "ready", lastValue: 20, samples: [], max: 20, loss: 0,
+    });
+    const byNode = new Map([
+      ["node-a", [1, 2, 3, 4].map((id) => line(id, "node-a"))],
+      ["node-b", [1, 2, 3].map((id) => line(id, "node-b"))],
+      ["hidden", [1, 2, 3, 4, 5].map((id) => line(id, "hidden"))],
+    ]);
+    expect(countVisibleHomepagePingLines(
+      byNode, [], { "node-a": [1, 2] }, new Set(["node-a", "node-b"]),
+    )).toBe(3);
+    expect(countVisibleHomepagePingLines(
+      byNode, [], { "node-a": [1, 2] }, new Set(["node-a"]),
+    )).toBe(2);
+    expect(countVisibleHomepagePingLines(byNode, [], {}, new Set(["unassigned"]))).toBe(1);
+  });
+});
 
 function aggregateSamples(intervalMinutes: number) {
   const alignedStart = Date.UTC(2026, 6, 17, 10, 0);

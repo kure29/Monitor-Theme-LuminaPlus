@@ -4,6 +4,7 @@ import { useHourlyClock, useMinuteClock } from "@/hooks/useClock";
 import { useNodeCardSnapshots } from "@/hooks/useNode";
 import {
   buildPingBuckets,
+  useAutoSimulatedPingLineCount,
   useNodePingOverview,
   useNodePingOverviewLines,
   usePingBuckets,
@@ -15,6 +16,7 @@ import type {
   PingOverviewItem,
 } from "@/types/models";
 import { formatRenewalPrice } from "@/utils/billing";
+import { buildFakePingItem } from "@/utils/fakePing";
 import { getExpireTextColor } from "@/utils/expireStatus";
 import { getTrafficResetDisplay } from "@/utils/trafficReset";
 import {
@@ -55,6 +57,7 @@ export function buildHomepagePingDisplayLines(
   fallbackPing: PingOverviewItem,
   preferredTaskIds: number[],
   nodeTaskIds: HomepageMultiPingNodeTaskIds,
+  fakeLineCount: number,
   bucketCount: number | undefined,
   now: number,
 ): HomepagePingDisplayLine[] {
@@ -76,12 +79,17 @@ export function buildHomepagePingDisplayLines(
   if (visibleLines.length > 0 || realLines.length > 0 || fallbackPing.simulated !== true) {
     return visibleLines;
   }
-  return [{
-    taskId: 0,
-    taskName: "延迟",
-    ...fallbackPing,
-    buckets: buildPingBuckets(fallbackPing, bucketCount, now),
-  }];
+  return Array.from({ length: fakeLineCount }, (_, lineIndex) => {
+    const item = lineIndex === 0
+      ? fallbackPing
+      : buildFakePingItem(uuid, Math.floor(now / 60_000), lineIndex);
+    return {
+      taskId: lineIndex === 0 ? 0 : -lineIndex,
+      taskName: fakeLineCount === 1 ? "延迟" : `延迟 ${lineIndex + 1}`,
+      ...item,
+      buckets: buildPingBuckets(item, bucketCount, now),
+    };
+  });
 }
 
 export function useNodeCardModel(
@@ -95,6 +103,7 @@ export function useNodeCardModel(
   const {
     showCardGroup,
     fakePingForUnbound,
+    fakePingLineCount,
     enableHomepageMultiPing,
     homepageMultiPingTaskIds,
     homepageMultiPingNodeTaskIds,
@@ -102,6 +111,13 @@ export function useNodeCardModel(
   const multiPingActive = includeMultiPing && enableHomepageMultiPing;
   const realPing = useNodePingOverview(uuid, !multiPingActive || fakePingForUnbound);
   const realPingLines = useNodePingOverviewLines(uuid, multiPingActive);
+  const autoFakePingLineCount = useAutoSimulatedPingLineCount(
+    multiPingActive && fakePingForUnbound && fakePingLineCount === "auto" &&
+    metrics?.online === true && realPing.loadState === "ready" && !realPing.isAssigned,
+  );
+  const simulatedLineCount = fakePingLineCount === "auto"
+    ? autoFakePingLineCount
+    : fakePingLineCount;
   const hasRealHomepagePingBinding = useMemo(
     () => multiPingActive || realPing.isAssigned || realPing.loadState === "error",
     [multiPingActive, realPing.isAssigned, realPing.loadState],
@@ -142,6 +158,7 @@ export function useNodeCardModel(
       ping,
       homepageMultiPingTaskIds,
       homepageMultiPingNodeTaskIds,
+      simulatedLineCount,
       pingBucketCount,
       bucketNow,
     );
@@ -153,6 +170,7 @@ export function useNodeCardModel(
     ping,
     pingBucketCount,
     realPingLines,
+    simulatedLineCount,
     uuid,
   ]);
 

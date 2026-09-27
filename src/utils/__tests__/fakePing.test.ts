@@ -60,4 +60,13 @@ describe("buildFakePingItem", () => {
     );
   });
 
+  it("同一服务器的不同模拟线路稳定且曲线不同", () => {
+    const first = buildFakePingItem(UUID, MINUTE_INDEX, 1);
+    const second = buildFakePingItem(UUID, MINUTE_INDEX, 2);
+    expect(buildFakePingItem(UUID, MINUTE_INDEX, 1)).toEqual(first);
+    expect(first.samples).not.toEqual(second.samples);
+    expect(first.simulated).toBe(true);
+    expect(second.simulated).toBe(true);
+  });
+
 });

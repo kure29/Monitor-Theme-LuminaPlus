@@ -87,6 +87,7 @@ import {
 } from "@/utils/pingBindings";
 import {
   DEFAULT_THEME_SETTINGS,
+  MAX_FIXED_FAKE_PING_LINES,
   normalizeHomeHeaderVisibleSeconds,
   normalizeThemeSettings,
   type AmbientEffect,
@@ -226,6 +227,7 @@ function pickManagedThemeSettings(settings: ResolvedThemeSettings) {
     homepageMultiPingTaskIds: settings.homepageMultiPingTaskIds,
     homepageMultiPingNodeTaskIds: settings.homepageMultiPingNodeTaskIds,
     fakePingForUnbound: settings.fakePingForUnbound,
+    fakePingLineCount: settings.fakePingLineCount,
     enableHomeHeaderAutoHide: settings.enableHomeHeaderAutoHide,
     homeHeaderVisibleSeconds: settings.homeHeaderVisibleSeconds,
     showHomeOverview: settings.showHomeOverview,
@@ -2332,10 +2334,34 @@ export function ThemeManage() {
           <ToggleRow
             field="fakePingForUnbound"
             title="后台未分配任务时显示模拟延迟"
-            desc="开启后，后台未分配 Ping 任务的在线节点会显示前端生成的模拟数据（延迟 1-10ms、丢包 0%）；多线路模式下显示一条模拟线路。已有真实任务、离线或读取失败的节点不会模拟。模拟数值会带「模拟」标记，不代表真实网络质量。"
+            desc="开启后，后台未分配 Ping 任务的在线节点会显示前端生成的模拟数据（延迟 1-10ms、丢包 0%）。已有真实任务、离线或读取失败的节点不会模拟；所有模拟值都带「模拟」标记，不代表真实网络质量。"
             checked={draft.fakePingForUnbound}
             onPatch={patch}
           />
+
+          {draft.fakePingForUnbound && draft.enableHomepageMultiPing && (
+            <label className="surface-inset flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium text-[var(--text-primary)]">模拟线路数量</span>
+                <span className="mt-1 block text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+                  自动模式匹配首页最多的可见真实线路；没有真实线路时显示 1 条。
+                </span>
+              </span>
+              <select
+                value={draft.fakePingLineCount}
+                onChange={(event) => patch(
+                  "fakePingLineCount",
+                  event.target.value === "auto" ? "auto" : Number(event.target.value),
+                )}
+                className="surface-inset w-full shrink-0 px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none sm:w-[196px]"
+              >
+                <option value="auto">自动匹配（推荐）</option>
+                {Array.from({ length: MAX_FIXED_FAKE_PING_LINES }, (_, index) => (
+                  <option key={index + 1} value={index + 1}>固定 {index + 1} 条</option>
+                ))}
+              </select>
+            </label>
+          )}
 
           {(tasksLoading || clientsLoading) && (
             <div className="flex min-h-[20vh] items-center justify-center">
