@@ -84,6 +84,7 @@ preview.png
 `url` 指向仓库的最新 release，从中取 `theme.tar.gz` 更新（版本号与 release tag 相同则跳过）。
 发布新版本：改 `theme.json` 与 `package.json` 的 `version`，提交后推送 `vX.Y.Z` tag，
 `.github/workflows/release.yml` 会自动打包并创建 release。
+tag 必须与 `version` 一致（`v1.2.3` 对 `1.2.3`），否则工作流会直接失败、不发布。
 
 也可以手动解压到 hub 的主题目录：
 
