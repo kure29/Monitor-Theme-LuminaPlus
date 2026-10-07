@@ -37,6 +37,7 @@ import { useHomeNodeOrder } from "@/hooks/useHomeNodeOrder";
 import { HOME_SORT_NATURAL_DIRECTION } from "@/utils/homeSort";
 import { useHourlyClock } from "@/hooks/useClock";
 import { preloadAssetsPage } from "@/services/assetsPageLoader";
+import { preloadTrafficPage } from "@/services/trafficPageLoader";
 import {
   preloadTodayTrafficStats,
   TodayTrafficStatsProvider,
@@ -430,6 +431,7 @@ export function NodeGrid() {
     [visibleMeta],
   );
   const warmTrafficPage = useCallback(() => {
+    preloadTrafficPage();
     void preloadTodayTrafficStats(queryClient, trafficUuids, Date.now());
   }, [queryClient, trafficUuids]);
   // 「名称」排序需要展示名(摘要无 name),从 meta 注入。

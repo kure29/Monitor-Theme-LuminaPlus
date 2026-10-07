@@ -4,11 +4,14 @@ import { AppShell } from "@/components/shell/AppShell";
 import { RouteErrorFallback } from "@/components/shell/ErrorBoundary";
 import { Spinner } from "@/components/ui/Spinner";
 import { loadAssetsPage } from "@/services/assetsPageLoader";
-import { Traffic } from "@/pages/Traffic";
+import { loadTrafficPage } from "@/services/trafficPageLoader";
 import { Home } from "@/pages/Home";
 
 const Instance = lazy(() =>
   import("@/pages/Instance").then((m) => ({ default: m.Instance })),
+);
+const Traffic = lazy(() =>
+  loadTrafficPage().then((m) => ({ default: m.Traffic })),
 );
 const Assets = lazy(() =>
   loadAssetsPage().then((m) => ({ default: m.Assets })),
@@ -49,7 +52,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "traffic",
-        element: <Traffic />,
+        element: suspended(<Traffic />),
       },
       {
         path: "404",

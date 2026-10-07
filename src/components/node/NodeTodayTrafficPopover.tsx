@@ -16,6 +16,7 @@ import {
   type NodeTodayTrafficView,
 } from "@/hooks/useTodayTrafficStats";
 import { useFineHover } from "@/hooks/useMediaQuery";
+import { preloadTrafficPage } from "@/services/trafficPageLoader";
 import { formatBytes, formatByteRateLabel, formatClockTime } from "@/utils/format";
 import {
   consumeTriggerFocusSuppression,
@@ -356,7 +357,12 @@ function TodayTrafficPopoverBody({ traffic }: { traffic: NodeTodayTrafficView })
           {source === "records" ? "按记录采样" : "按 5 分钟采样"} · 更新{" "}
           {formatClockTime(dataUpdatedAt)}
         </span>
-        <Link to="/traffic" className="node-traffic-popover-link">
+        <Link
+          to="/traffic"
+          className="node-traffic-popover-link"
+          onPointerEnter={preloadTrafficPage}
+          onFocus={preloadTrafficPage}
+        >
           明细
         </Link>
       </div>
