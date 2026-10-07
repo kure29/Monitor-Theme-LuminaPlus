@@ -4,10 +4,7 @@ import { useMinuteClock } from "@/hooks/useClock";
 import { useVisibleNodeUuids } from "@/hooks/useNode";
 import { useHiddenNodeUuids } from "@/hooks/useVisibleNodes";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
-import {
-  getPingOverview,
-  prewarmPingOverviewDependencies,
-} from "@/services/api";
+import { getPingOverview } from "@/services/api";
 import type {
   HomepagePingLine,
   PingOverviewBucket,
@@ -942,7 +939,6 @@ export function useHomepagePingOverview(displayedNodeUuids?: string[]) {
     [visibleUuids, hiddenUuids],
   );
   const requestedBindings = themeSettings.homepagePingBindings;
-  const hasRequestedVisiblePing = effectiveUuids.length > 0;
 
   useLayoutEffect(() => {
     displayPreferredTaskIds = themeSettings.homepageMultiPingTaskIds;
@@ -953,10 +949,6 @@ export function useHomepagePingOverview(displayedNodeUuids?: string[]) {
 
   useLayoutEffect(() => {
     if (!themeSettings.isReady) return;
-    // 空首页或全部节点被隐藏时不应触发 capability probe / 公开任务列表请求。
-    if (hasRequestedVisiblePing) {
-      prewarmPingOverviewDependencies();
-    }
     activeConsumers += 1;
     ensurePingOverviewStarted(
       effectiveUuids,
@@ -972,7 +964,6 @@ export function useHomepagePingOverview(displayedNodeUuids?: string[]) {
   }, [
     effectiveUuids,
     requestedBindings,
-    hasRequestedVisiblePing,
     themeSettings.isReady,
   ]);
 }

@@ -1,5 +1,5 @@
 import type { NodeInfo, NodeMetrics, NodeRealtime, TrafficTrendSample } from "@/types/models";
-import { getNodes, getNodesLatestStatus } from "@/services/api";
+import { getNodes, getNodesLatestStatus, subscribeLiveSnapshots } from "@/services/api";
 
 type Listener = () => void;
 type RealtimePayload = Record<string, unknown>;
@@ -775,8 +775,13 @@ async function performNodeInfoSync() {
   }
 }
 
+function isPageHidden() {
+  return typeof document !== "undefined" && document.hidden;
+}
+
 async function refreshLatestStatus() {
-  if (refreshInFlight || state.order.length === 0) return;
+  // 后台标签页不刷新实时指标,回到前台时由 visibilitychange 立即补一次。
+  if (refreshInFlight || state.order.length === 0 || isPageHidden()) return;
   if (scrollActive) {
     refreshDeferredWhileScrolling = true;
     return;
@@ -852,12 +857,40 @@ let retainCount = 0;
 let stopTimer: number | null = null;
 let liveStatusTimer: number | null = null;
 let nodeInfoTimer: number | null = null;
+let unsubscribeLiveSnapshots: (() => void) | null = null;
+
+function handleLiveSnapshot() {
+  // WS 推送到达即刷新,不必等下一个 2 秒轮询 tick;轮询保留作 WS 不可用时的兜底。
+  if (hydrated) void refreshLatestStatus();
+}
+
+function connectLiveSnapshots() {
+  unsubscribeLiveSnapshots ??= subscribeLiveSnapshots(handleLiveSnapshot);
+}
+
+function disconnectLiveSnapshots() {
+  unsubscribeLiveSnapshots?.();
+  unsubscribeLiveSnapshots = null;
+}
+
+function handleVisibilityChange() {
+  if (isPageHidden()) {
+    disconnectLiveSnapshots();
+    return;
+  }
+  connectLiveSnapshots();
+  if (hydrated) void refreshLatestStatus();
+}
 
 function ensureStarted() {
   if (started) return;
   started = true;
 
   ensureScrollTrackingStarted();
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+  }
+  if (!isPageHidden()) connectLiveSnapshots();
   void bootstrap();
   // 实时指标与节点信息使用独立轮询节奏。
   liveStatusTimer = window.setInterval(() => {
@@ -922,6 +955,10 @@ function stopStore() {
     window.removeEventListener("scroll", markScrollActivity);
     scrollTrackingStarted = false;
   }
+  if (typeof document !== "undefined") {
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }
+  disconnectLiveSnapshots();
   scrollActive = false;
   refreshDeferredWhileScrolling = false;
   hydrated = false;

@@ -73,6 +73,12 @@ describe("monitor node adapter", () => {
     });
   });
 
+  it("stamps online samples with the snapshot arrival time", () => {
+    expect(monitorNodeToRealtime(node, 1_700_000_000_000)).toMatchObject({
+      updated_at: 1_700_000_000_000,
+    });
+  });
+
   it("keeps monthly counters for an offline node", () => {
     expect(monitorNodeToRealtime({ ...node, online: false, metrics: null })).toMatchObject({
       online: false,

@@ -180,6 +180,10 @@ let cachedNodes: MonitorNode[] = [];
 let cachedAt = 0;
 let socket: WebSocket | null = null;
 let reconnectTimer: number | null = null;
+const LIVE_SOCKET_MIN_RECONNECT_MS = 5_000;
+const LIVE_SOCKET_MAX_RECONNECT_MS = 60_000;
+let reconnectDelayMs = LIVE_SOCKET_MIN_RECONNECT_MS;
+const liveSnapshotListeners = new Set<() => void>();
 
 function acceptSnapshot(payload: unknown) {
   if (!payload || typeof payload !== "object") return false;
@@ -193,41 +197,80 @@ function acceptSnapshot(payload: unknown) {
   return true;
 }
 
-function ensureLiveSocket() {
-  if (typeof window === "undefined" || typeof WebSocket === "undefined" || socket) return;
-  if (
-    import.meta.env.DEV &&
-    typeof sessionStorage !== "undefined" &&
-    sessionStorage.getItem(DEV_MOCK_SESSION_KEY) === "1"
-  ) return;
-  const connect = () => {
+function scheduleReconnect() {
+  if (reconnectTimer != null || liveSnapshotListeners.size === 0) return;
+  reconnectTimer = window.setTimeout(connectLiveSocket, reconnectDelayMs);
+  // hub 不支持 /api/ws 或反代没开 Upgrade 时会一直失败,按指数退避,别每 5 秒重连一次。
+  reconnectDelayMs = Math.min(reconnectDelayMs * 2, LIVE_SOCKET_MAX_RECONNECT_MS);
+}
+
+function connectLiveSocket() {
+  reconnectTimer = null;
+  if (socket || liveSnapshotListeners.size === 0) return;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  try {
+    const next = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
+    socket = next;
+    next.onmessage = (event) => {
+      let accepted = false;
+      try {
+        accepted = acceptSnapshot(JSON.parse(String(event.data)));
+      } catch {
+        // A broken frame is ignored; the next two-second snapshot can recover.
+      }
+      if (!accepted) return;
+      reconnectDelayMs = LIVE_SOCKET_MIN_RECONNECT_MS;
+      for (const listener of liveSnapshotListeners) listener();
+    };
+    next.onerror = () => next.close();
+    next.onclose = () => {
+      if (socket === next) socket = null;
+      scheduleReconnect();
+    };
+  } catch {
+    scheduleReconnect();
+  }
+}
+
+function closeLiveSocket() {
+  if (reconnectTimer != null) {
+    window.clearTimeout(reconnectTimer);
     reconnectTimer = null;
-    if (socket) return;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    try {
-      const next = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
-      socket = next;
-      next.onmessage = (event) => {
-        try {
-          acceptSnapshot(JSON.parse(String(event.data)));
-        } catch {
-          // A broken frame is ignored; the next two-second snapshot can recover.
-        }
-      };
-      next.onerror = () => next.close();
-      next.onclose = () => {
-        if (socket === next) socket = null;
-        if (reconnectTimer == null) reconnectTimer = window.setTimeout(connect, 5_000);
-      };
-    } catch {
-      if (reconnectTimer == null) reconnectTimer = window.setTimeout(connect, 5_000);
-    }
+  }
+  reconnectDelayMs = LIVE_SOCKET_MIN_RECONNECT_MS;
+  const current = socket;
+  socket = null;
+  if (!current) return;
+  current.onmessage = null;
+  current.onerror = null;
+  current.onclose = null;
+  current.close();
+}
+
+/**
+ * 订阅 /api/ws 推送的节点快照。有订阅者时保持连接,最后一个退订时断开。
+ * 推送只写入节点缓存,listener 收到通知后再通过 getNodesLatestStatus 读取。
+ */
+export function subscribeLiveSnapshots(listener: () => void): () => void {
+  liveSnapshotListeners.add(listener);
+  if (
+    typeof window !== "undefined" &&
+    typeof WebSocket !== "undefined" &&
+    !(
+      import.meta.env.DEV &&
+      typeof sessionStorage !== "undefined" &&
+      sessionStorage.getItem(DEV_MOCK_SESSION_KEY) === "1"
+    )
+  ) {
+    connectLiveSocket();
+  }
+  return () => {
+    if (!liveSnapshotListeners.delete(listener)) return;
+    if (liveSnapshotListeners.size === 0) closeLiveSocket();
   };
-  connect();
 }
 
 async function loadMonitorNodes(options?: ApiCallOptions, allowFreshCache = true) {
-  ensureLiveSocket();
   if (allowFreshCache && cachedNodes.length > 0 && Date.now() - cachedAt < 7_000) {
     return cachedNodes;
   }
@@ -294,7 +337,11 @@ export function monitorNodeToInfo(node: MonitorNode): NodeInfo {
   };
 }
 
-export function monitorNodeToRealtime(node: MonitorNode): Record<string, unknown> {
+// receivedAt 是快照到达时间:同一份缓存快照被重复读取时时间戳不变,store 才能认出没有新数据。
+export function monitorNodeToRealtime(
+  node: MonitorNode,
+  receivedAt = Date.now(),
+): Record<string, unknown> {
   const metrics = node.metrics;
   const monthUp = number(node.month_tx, number(metrics?.month_tx));
   const monthDown = number(node.month_rx, number(metrics?.month_rx));
@@ -325,7 +372,7 @@ export function monitorNodeToRealtime(node: MonitorNode): Record<string, unknown
     connections: { tcp: number(metrics.tcp), udp: number(metrics.udp) },
     uptime: number(metrics.uptime),
     process: number(metrics.procs),
-    updated_at: Date.now(),
+    updated_at: receivedAt,
   };
 }
 
@@ -535,7 +582,7 @@ export async function getNodesLatestStatus(
   return Object.fromEntries(
     nodes
       .filter((node) => !selected || selected.has(String(node.id)))
-      .map((node) => [String(node.id), monitorNodeToRealtime(node)]),
+      .map((node) => [String(node.id), monitorNodeToRealtime(node, cachedAt)]),
   );
 }
 
@@ -755,10 +802,6 @@ export async function saveThemeSettings(
     const detail = (await response.text()).trim();
     throw new ApiRequestError(detail || `Request failed: ${response.status}`, response.status, path);
   }
-}
-
-export function prewarmPingOverviewDependencies() {
-  ensureLiveSocket();
 }
 
 export async function getPingOverview(
