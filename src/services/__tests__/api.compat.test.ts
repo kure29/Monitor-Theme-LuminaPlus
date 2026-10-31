@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getLoadRecords, normalizePingHistory } from "@/services/api";
+import { getLoadRecords, monitorNodeToInfo, normalizePingHistory } from "@/services/api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -80,6 +80,44 @@ describe("monitor resource history adapter", () => {
         process: false,
         load: false,
       },
+    });
+  });
+});
+
+describe("monitor 1.3–1.5 public fields", () => {
+  it("reads the public remark, never the private one", () => {
+    const info = monitorNodeToInfo({ id: 3, remark: "私有", public_remark: "CN2 GIA" });
+    expect(info.public_remark).toBe("CN2 GIA");
+    expect(monitorNodeToInfo({ id: 3, remark: "私有" }).public_remark).toBe("");
+  });
+
+  it("orders probes the way the panel lists them", () => {
+    // hub 按后台延迟页的顺序逐个探测输出，不再按时间交错。
+    const result = normalizePingHistory("9", 1, {
+      probes: { "1": "A", "2": "B", "3": "C", "4": "D" },
+      ping: [
+        { task_id: 3, ts: 1_700_000_000, latency: 10 },
+        { task_id: 3, ts: 1_700_000_060, latency: 11 },
+        { task_id: 1, ts: 1_700_000_000, latency: 20 },
+        { task_id: 2, ts: 1_700_000_000, latency: 30 },
+      ],
+    });
+    expect(result.tasks.map((task) => task.id)).toEqual([3, 1, 2, 4]);
+  });
+
+  it("charts swap, connections and processes once the hub returns them", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      step: 300,
+      metrics: [{ ts: 1_700_000_000, cpu: 5, swap_used: 1024, tcp: 40, udp: 3, procs: 120 }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    const result = await getLoadRecords("11", 24);
+    expect(result.intervalSeconds).toBe(300);
+    expect(result.records[0]).toMatchObject({
+      swap: 1024,
+      connections: 40,
+      connections_udp: 3,
+      process: 120,
+      history_capabilities: { swap: true, connections: true, process: true, load: false },
     });
   });
 });
