@@ -38,7 +38,14 @@ jobs:
             theme.tar.gz
             theme.tar.gz.sha256
             preview.png
+      # 在网页上先建好 Release 再推 tag(或网页建 Release 时顺手建 tag)时，Release 已经存在：
+      # 这时只补传主题包，覆盖同名文件，不再因为「already exists」失败。
       - if: startsWith(github.ref, 'refs/tags/')
-        run: gh release create "$GITHUB_REF_NAME" theme.tar.gz theme.tar.gz.sha256 --generate-notes --repo "$GITHUB_REPOSITORY"
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" theme.tar.gz theme.tar.gz.sha256 --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" theme.tar.gz theme.tar.gz.sha256 --generate-notes --repo "$GITHUB_REPOSITORY"
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
