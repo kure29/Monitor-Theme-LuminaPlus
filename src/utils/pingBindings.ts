@@ -53,7 +53,8 @@ export function syncHomepagePingBindings(
 ): HomepagePingTaskBindings {
   const allowedClients = new Set(clientUuids);
   const availableByClient = new Map<string, number[]>();
-  for (const task of [...tasks].sort((a, b) => a.id - b.id)) {
+  // tasks 已按后台延迟页的顺序排列，单线路默认取该顺序的第一条。
+  for (const task of tasks) {
     for (const uuid of task.clients) {
       if (!allowedClients.has(uuid)) continue;
       const available = availableByClient.get(uuid) ?? [];

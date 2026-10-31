@@ -88,7 +88,10 @@ interface MonitorNode {
   ip?: string;
   ipv4?: string;
   ipv6?: string;
+  /** 私有备注:只在站长登录后下发,主题不展示。 */
   remark?: string;
+  /** 站长写给访客的公开备注(hub 1.3.2+)。 */
+  public_remark?: string;
 }
 
 interface MonitorMetricPoint {
@@ -98,6 +101,14 @@ interface MonitorMetricPoint {
   disk_used?: number;
   net_rx?: number;
   net_tx?: number;
+  /** 桶内最高网速(hub 1.3.1+)。 */
+  net_rx_max?: number;
+  net_tx_max?: number;
+  /** 以下四项 hub 1.4.1 起才返回;旧版 hub 缺席时主题仍只显示实时值。 */
+  swap_used?: number;
+  tcp?: number;
+  udp?: number;
+  procs?: number;
 }
 
 interface MonitorPingPoint {
@@ -112,6 +123,8 @@ interface MonitorHistory {
   ping?: MonitorPingPoint[];
   probes?: Record<string, string>;
   loss?: Record<string, number>;
+  /** 每个点覆盖的秒数(hub 1.3.2+);旧版 hub 缺席时从相邻时间戳推算。 */
+  step?: number;
 }
 
 interface PingOverviewResponse {
@@ -284,7 +297,7 @@ export function monitorNodeToInfo(node: MonitorNode): NodeInfo {
     currency: string(node.currency),
     expired_at: string(node.expires_at),
     tags: "",
-    public_remark: string(node.remark),
+    public_remark: string(node.public_remark),
     traffic_limit: number(node.traffic_limit),
     traffic_limit_type: string(node.traffic_mode) || "sum",
     ipv4: string(node.ipv4),
@@ -460,6 +473,11 @@ function range(hours: number) {
   return { rangeStartMs: end - Math.max(1, hours) * 3_600_000, rangeEndMs: end };
 }
 
+function historyStep(payload: MonitorHistory) {
+  const step = payload.step;
+  return typeof step === "number" && Number.isFinite(step) && step > 0 ? step : undefined;
+}
+
 function inferIntervalSeconds(times: number[]) {
   const sorted = [...new Set(times)].sort((a, b) => a - b);
   const gaps = sorted.slice(1).map((time, index) => time - sorted[index]).filter((gap) => gap > 0);
@@ -556,12 +574,21 @@ export async function getLoadRecords(
   options?: LoadRecordsOptions,
 ): Promise<LoadRecordsResponse> {
   const payload = await getHistory(uuid, hours, "metrics", options);
-  const records: LoadRecord[] = (payload.metrics ?? []).map((point) => ({
+  const points = payload.metrics ?? [];
+  const has = (key: keyof MonitorMetricPoint) => points.some((point) => typeof point[key] === "number");
+  const capabilities = {
+    swap: has("swap_used"),
+    trafficTotals: false,
+    connections: has("tcp"),
+    process: has("procs"),
+    load: false,
+  };
+  const records: LoadRecord[] = points.map((point) => ({
     cpu: number(point.cpu),
     gpu: 0,
     ram: number(point.mem_used),
     ram_total: 0,
-    swap: 0,
+    swap: number(point.swap_used),
     swap_total: 0,
     load: 0,
     temp: 0,
@@ -571,24 +598,18 @@ export async function getLoadRecords(
     net_out: number(point.net_tx),
     net_total_up: 0,
     net_total_down: 0,
-    process: 0,
-    connections: 0,
-    connections_udp: 0,
+    process: number(point.procs),
+    connections: number(point.tcp),
+    connections_udp: number(point.udp),
     time: point.ts,
     client: uuid,
-    history_capabilities: {
-      swap: false,
-      trafficTotals: false,
-      connections: false,
-      process: false,
-      load: false,
-    },
+    history_capabilities: capabilities,
   }));
   return {
     count: records.length,
     records,
     ...range(hours),
-    intervalSeconds: inferIntervalSeconds((payload.metrics ?? []).map((point) => point.ts)),
+    intervalSeconds: historyStep(payload) ?? inferIntervalSeconds(points.map((point) => point.ts)),
   };
 }
 
@@ -633,7 +654,10 @@ export async function getTodayTrafficMetrics(
     const result = histories[index];
     const points = result?.status === "fulfilled" ? result.value.metrics ?? [] : [];
     const inRange = points.filter((point) => point.ts * 1_000 >= startMs && point.ts * 1_000 <= endMs);
-    const nodeInterval = inferIntervalSeconds(inRange.map((point) => point.ts)) ?? 0;
+    const nodeInterval =
+      (result?.status === "fulfilled" ? historyStep(result.value) : undefined) ??
+      inferIntervalSeconds(inRange.map((point) => point.ts)) ??
+      0;
     intervalSeconds = Math.max(intervalSeconds, nodeInterval);
     const point = (value: number) => [{ time: new Date(endMs).toISOString(), value, count: 1 }];
     series.push(
@@ -699,8 +723,7 @@ export function normalizePingHistory(uuid: string, hours: number, payload: Monit
       .filter((id) => Number.isSafeInteger(id) && id > 0),
   );
   const interval = inferIntervalSeconds((payload.ping ?? []).map((point) => point.ts));
-  const tasks = [...ids]
-    .sort((left, right) => left - right)
+  const tasks = orderTaskIds(ids, records)
     .map((id) => ({
       ...taskFromProbe(id, payload.probes?.[String(id)] ?? "", [uuid]),
       interval: interval ?? 60,
@@ -714,6 +737,40 @@ export function normalizePingHistory(uuid: string, hours: number, payload: Monit
     ...range(hours),
     intervalSeconds: interval,
   };
+}
+
+/**
+ * hub 1.3.1 起 `ping` 按后台延迟页的拖拽顺序逐个探测输出(同一探测内按时间)，
+ * 主题以探测首次出现的先后作为线路顺序；窗口内没有记录的探测排在后面，按 id。
+ * 旧版 hub 按时间输出，此时顺序与 id 顺序接近，不影响显示。
+ */
+function orderTaskIds(ids: Set<number>, records: PingRecord[]) {
+  const ordered: number[] = [];
+  const seen = new Set<number>();
+  for (const record of records) {
+    if (!ids.has(record.task_id) || seen.has(record.task_id)) continue;
+    seen.add(record.task_id);
+    ordered.push(record.task_id);
+  }
+  const rest = [...ids].filter((id) => !seen.has(id)).sort((left, right) => left - right);
+  return [...ordered, ...rest];
+}
+
+/**
+ * 合并各节点的任务顺序：每台节点的顺序都是后台全局顺序的子序列，
+ * 新任务插在它在该节点中前一个已知任务之后，没有前驱时插在最前。
+ */
+function mergeTaskOrder(target: number[], next: number[]) {
+  let anchor = -1;
+  for (const id of next) {
+    const existing = target.indexOf(id);
+    if (existing >= 0) {
+      anchor = existing;
+      continue;
+    }
+    target.splice(anchor + 1, 0, id);
+    anchor += 1;
+  }
 }
 
 export async function getPingRecords(
@@ -779,6 +836,7 @@ export async function getPingOverview(
   const successfulEntityIds = entityIds.filter((_, index) => responses[index]?.status === "fulfilled");
   const records: PingRecord[] = [];
   const tasks = new Map<number, PingTask>();
+  const taskOrder: number[] = [];
   const clientWindowLoss: Record<string, Record<number, number>> = {};
   responses.forEach((result, index) => {
     if (result.status !== "fulfilled") return;
@@ -791,6 +849,10 @@ export async function getPingOverview(
       const client = entityIds[index];
       if (client) clientWindowLoss[client] = { ...windowLoss };
     }
+    mergeTaskOrder(
+      taskOrder,
+      result.value.tasks.map((task) => task.id).filter((id) => taskId == null || id === taskId),
+    );
     for (const task of result.value.tasks) {
       if (taskId != null && task.id !== taskId) continue;
       const previous = tasks.get(task.id);
@@ -802,7 +864,10 @@ export async function getPingOverview(
   });
   return {
     records,
-    tasks: [...tasks.values()],
+    tasks: taskOrder.flatMap((id) => {
+      const task = tasks.get(id);
+      return task ? [task] : [];
+    }),
     taskAssignmentsKnown: true,
     failedEntityIds,
     successfulEntityIds,

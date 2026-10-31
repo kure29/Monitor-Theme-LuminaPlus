@@ -341,9 +341,8 @@ export async function buildBackendPingOverviewMap(
       multiLines.set(uuid, priorLines?.map((line) => ({ ...line, loadState: "error" })) ?? []);
       continue;
     }
-    const assignedTasks = overview.tasks
-      .filter((task) => task.clients.includes(uuid))
-      .sort((left, right) => left.id - right.id);
+    // overview.tasks 已按后台延迟页的顺序排列，过滤后保持该顺序。
+    const assignedTasks = overview.tasks.filter((task) => task.clients.includes(uuid));
     const lines = assignedTasks.map((task) => ({
       taskId: task.id,
       taskName: task.name || `任务 #${task.id}`,

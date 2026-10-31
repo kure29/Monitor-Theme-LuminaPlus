@@ -13,17 +13,43 @@ function formatPriceNumber(value: number) {
   return (Number.isInteger(value) ? INT_PRICE_FORMATTER : DECIMAL_PRICE_FORMATTER).format(value);
 }
 
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: "$",
-  CNY: "¥",
-  EUR: "€",
-  GBP: "£",
-  JPY: "¥",
-};
+const currencyFormatters = new Map<string, Intl.NumberFormat | null>();
 
-function formatCurrency(value: string) {
-  const currency = value?.trim() || "CNY";
-  return CURRENCY_SYMBOLS[currency.toUpperCase()] ?? currency;
+function currencyFormatter(code: string, integer: boolean) {
+  const key = `${code}:${integer ? "int" : "dec"}`;
+  if (!currencyFormatters.has(key)) {
+    let formatter: Intl.NumberFormat | null = null;
+    try {
+      formatter = new Intl.NumberFormat("zh-CN", {
+        style: "currency",
+        currency: code,
+        currencyDisplay: "symbol",
+        minimumFractionDigits: integer ? 0 : 2,
+        maximumFractionDigits: 2,
+      });
+    } catch {
+      formatter = null;
+    }
+    currencyFormatters.set(key, formatter);
+  }
+  return currencyFormatters.get(key) ?? null;
+}
+
+/**
+ * 与 monitor 后台一致：按 zh-CN 的写法显示货币，符号或代码在数字前
+ * (`¥48`、`US$18`、`HK$38`、`JP¥1,200`、`SGD 12.50`)。
+ * hub 1.3.1 起货币一律是三个大写字母；更早的数据可能是 `$`、`港币` 之类的自由文本，
+ * 此时照原样放在数字前。
+ */
+export function formatCurrencyAmount(value: number, currency: string | null | undefined) {
+  const raw = currency?.trim() || "CNY";
+  const code = raw.toUpperCase();
+  const integer = Number.isInteger(value);
+  if (/^[A-Z]{3}$/.test(code)) {
+    const formatter = currencyFormatter(code, integer);
+    if (formatter) return formatter.format(value).replace(/\u00a0/g, " ");
+  }
+  return `${raw}${formatPriceNumber(value)}`;
 }
 
 function isLongTermExpire(value: string | number | null | undefined) {
@@ -33,6 +59,9 @@ function isLongTermExpire(value: string | number | null | undefined) {
 }
 
 type BillingCycleKind = "month" | "quarter" | "halfYear" | "year" | "lifetime";
+
+/** 一个月按 30 天摊销，与「月 = 30 天、季 = 90 天、半年 = 180 天」保持一致。 */
+const DAYS_PER_MONTH = 30;
 
 export interface ClassifiedBillingCycleWord {
   kind: BillingCycleKind;
@@ -70,12 +99,30 @@ export function classifyBillingCycleWord(
 }
 
 export interface NormalizedBillingCycle {
-  kind: BillingCycleKind | "days";
+  kind: BillingCycleKind | "months" | "days";
   /** 摊销天数;lifetime 为 -1 哨兵。 */
   days: number;
   /** kind === "year" 时的整年数(365/360 天均视为 1 年)。 */
   years?: number;
+  /** kind === "months" 时的月数。 */
+  months?: number;
 }
+
+/**
+ * 按月数归类：1/3/6 个月对应月/季/半年，整年对应 N 年，其余是「N 个月」。
+ * 整年按 365 天/年摊销，与具名的 yearly/biennial/triennial 一致。
+ */
+function cycleFromMonths(months: number): NormalizedBillingCycle {
+  if (months === 1) return { kind: "month", days: 30 };
+  if (months === 3) return { kind: "quarter", days: 90 };
+  if (months === 6) return { kind: "halfYear", days: 180 };
+  if (months % 12 === 0) return { kind: "year", days: 365 * (months / 12), years: months / 12 };
+  return { kind: "months", days: months * DAYS_PER_MONTH, months };
+}
+
+/** monitor 1.3.1 起非具名周期存为 `<n>m`(n 为 1–1200 个月)。 */
+const MONITOR_MONTHS_PATTERN = /^(\d{1,4})\s*(m|mo|months?|个月|月)$/;
+const MONITOR_YEARS_PATTERN = /^(\d{1,3})\s*(y|yr|years?|年)$/;
 
 /**
  * 数字/文本账单周期的唯一归一化入口,标签渲染(formatBillingCycle)与成本摊销
@@ -98,11 +145,27 @@ export function normalizeBillingCycle(
     if (numeric > 0 && numeric % 365 === 0) {
       return { kind: "year", days: numeric, years: numeric / 365 };
     }
+    // 费用明细按天数回传周期(如 18 个月 = 540 天)，整月倍数按「N 个月」显示。
+    if (numeric > 0 && numeric % DAYS_PER_MONTH === 0) {
+      return { kind: "months", days: numeric, months: numeric / DAYS_PER_MONTH };
+    }
     if (numeric > 0) return { kind: "days", days: numeric };
     // numeric <= 0(如 0)落到下面的标签兜底分支。
   }
 
-  const word = classifyBillingCycleWord(raw.toLowerCase());
+  const lowered = raw.toLowerCase();
+  const monthsMatch = MONITOR_MONTHS_PATTERN.exec(lowered);
+  if (monthsMatch) {
+    const months = Number(monthsMatch[1]);
+    if (months > 0) return cycleFromMonths(months);
+  }
+  const yearsMatch = MONITOR_YEARS_PATTERN.exec(lowered);
+  if (yearsMatch) {
+    const years = Number(yearsMatch[1]);
+    if (years > 0) return cycleFromMonths(years * 12);
+  }
+
+  const word = classifyBillingCycleWord(lowered);
   switch (word?.kind) {
     case "month":
       return { kind: "month", days: 30 };
@@ -132,6 +195,8 @@ export function formatBillingCycle(value: string | number | null | undefined) {
       return "半年";
     case "year":
       return (cycle.years ?? 1) === 1 ? "年" : `${cycle.years}年`;
+    case "months":
+      return `${cycle.months}个月`;
     case "days":
       return `${cycle.days}天`;
   }
@@ -153,7 +218,6 @@ export function formatRenewalPrice({
   if (price === 0) return isLongTermExpire(expired_at) ? "免费" : null;
   if (price < 0) return null;
 
-  const symbol = formatCurrency(currency);
   const cycle = formatBillingCycle(billing_cycle);
-  return `${symbol}${formatPriceNumber(price)}/${cycle}`;
+  return `${formatCurrencyAmount(price, currency)}/${cycle}`;
 }

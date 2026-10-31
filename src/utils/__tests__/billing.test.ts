@@ -100,7 +100,7 @@ describe("formatRenewalPrice", () => {
 
   it("renders positive prices with currency and billing cycle", () => {
     expect(formatRenewalPrice({ price: 10, currency: "$", billing_cycle: 30 })).toBe("$10/月");
-    expect(formatRenewalPrice({ price: 10, currency: "USD", billing_cycle: "month" })).toBe("$10/月");
+    expect(formatRenewalPrice({ price: 10, currency: "USD", billing_cycle: "month" })).toBe("US$10/月");
     expect(formatRenewalPrice({ price: 19.9, currency: "EUR", billing_cycle: "year" })).toBe("€19.90/年");
     expect(formatRenewalPrice({ price: 19.9, currency: "¥", billing_cycle: -1 })).toBe("¥19.90/永久");
   });
@@ -110,5 +110,23 @@ describe("formatRenewalPrice", () => {
     expect(
       formatRenewalPrice({ price: 1095, currency: "CNY", billing_cycle: "triennial" }),
     ).toBe("¥1,095/3年");
+  });
+
+  it("understands monitor 1.3.1+ month-count cycles", () => {
+    expect(normalizeBillingCycle("18m")).toEqual({ kind: "months", days: 540, months: 18 });
+    expect(normalizeBillingCycle("1m")).toEqual({ kind: "month", days: 30 });
+    expect(normalizeBillingCycle("6m")).toEqual({ kind: "halfYear", days: 180 });
+    expect(normalizeBillingCycle("60m")).toEqual({ kind: "year", days: 1825, years: 5 });
+    expect(formatBillingCycle("18m")).toBe("18个月");
+    expect(formatBillingCycle(540)).toBe("18个月");
+    expect(formatBillingCycle("60m")).toBe("5年");
+    expect(formatRenewalPrice({ price: 300, currency: "CNY", billing_cycle: "18m" })).toBe("¥300/18个月");
+  });
+
+  it("formats currencies the way the monitor panel does", () => {
+    expect(formatRenewalPrice({ price: 1200, currency: "JPY", billing_cycle: "monthly" })).toBe("JP¥1,200/月");
+    expect(formatRenewalPrice({ price: 38, currency: "hkd", billing_cycle: "monthly" })).toBe("HK$38/月");
+    expect(formatRenewalPrice({ price: 12.5, currency: "SGD", billing_cycle: "monthly" })).toBe("SGD 12.50/月");
+    expect(formatRenewalPrice({ price: 9.9, currency: "港币", billing_cycle: "monthly" })).toBe("港币9.90/月");
   });
 });
